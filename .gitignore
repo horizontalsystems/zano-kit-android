@@ -1,0 +1,24 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Module build dirs
+**/build/
+
+# NDK / CMake
+.externalNativeBuild/
+**/externalNativeBuild/
+**/.cxx/
+
+# Credentials
+local.properties
