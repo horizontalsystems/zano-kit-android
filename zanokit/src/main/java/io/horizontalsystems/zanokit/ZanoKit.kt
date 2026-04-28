@@ -41,6 +41,8 @@ class ZanoKit private constructor(
 
         fun restoreHeightForDate(date: Date): Long = RestoreHeight.getHeight(date)
 
+        fun dateForRestoreHeight(height: Long): Date = RestoreHeight.getDate(height)
+
         // Derives the wallet address offline without opening the wallet.
         fun address(wallet: ZanoWallet): String? = when (wallet) {
             is ZanoWallet.Legacy ->

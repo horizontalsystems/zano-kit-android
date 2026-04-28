@@ -102,6 +102,44 @@ object RestoreHeight {
 
     fun maximumEstimatedHeight(): Long = getHeight(Date(System.currentTimeMillis() + 4L * 86400 * 1000))
 
+    fun getDate(height: Long): Date {
+        val sorted = checkpoints.entries.sortedBy { it.value }
+        val prev = sorted.lastOrNull { it.value <= height }
+        val next = sorted.firstOrNull { it.value > height }
+
+        return when {
+            prev != null && next != null -> {
+                val prevDate = parseDate(prev.key)
+                val nextDate = parseDate(next.key)
+                val timeDiff = nextDate.time - prevDate.time
+                val heightDiff = next.value - prev.value
+                val heightOffset = height - prev.value
+                if (heightDiff > 0) {
+                    Date(prevDate.time + timeDiff * heightOffset / heightDiff)
+                } else {
+                    prevDate
+                }
+            }
+            prev != null -> {
+                val prevDate = parseDate(prev.key)
+                val heightOffset = height - prev.value
+                val dailyBlocks = 86400.0 / DIFFICULTY_TARGET
+                val daysOffset = heightOffset / dailyBlocks
+                Date(prevDate.time + (daysOffset * 86400_000L).toLong())
+            }
+            else -> parseDate(sorted.first().key)
+        }
+    }
+
+    private fun parseDate(dateStr: String): Date {
+        val parts = dateStr.split("-")
+        val utc = TimeZone.getTimeZone("UTC")
+        val cal = Calendar.getInstance(utc)
+        cal.set(parts[0].toInt(), parts[1].toInt() - 1, parts[2].toInt(), 0, 0, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.time
+    }
+
     private fun getHeightOrEstimate(date: Date): Long {
         val utc = TimeZone.getTimeZone("UTC")
         val cal = Calendar.getInstance(utc)
