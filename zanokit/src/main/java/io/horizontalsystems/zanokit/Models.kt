@@ -19,7 +19,7 @@ enum class SendPriority(val value: Int) {
 }
 
 enum class NetworkType(val value: Int) {
-    mainnet(0), testnet(1)
+    MainNet(0), TestNet(1)
 }
 
 sealed class SendAmount {

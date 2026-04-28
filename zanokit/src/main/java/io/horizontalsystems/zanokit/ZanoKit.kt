@@ -5,7 +5,9 @@ import io.horizontalsystems.zanokit.storage.ZanoDatabase
 import io.horizontalsystems.zanokit.storage.ZanoStorage
 import io.horizontalsystems.zanokit.util.RestoreHeight
 import io.horizontalsystems.zanokit.util.deriveZanoSecretKey
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import java.io.File
 import java.util.Date
 import java.util.UUID
@@ -24,11 +26,10 @@ class ZanoKit private constructor(
             wallet: ZanoWallet,
             walletId: String,
             daemonAddress: String,
-            networkType: NetworkType = NetworkType.mainnet,
+            networkType: NetworkType = NetworkType.MainNet,
         ): ZanoKit {
-            val base = context.filesDir.absolutePath
-            val baseDir = "$base/ZanoKit/$walletId/network_${networkType.value}"
-            val db = ZanoDatabase.build(context, "$baseDir/storage")
+            val base = context.dataDir.absolutePath
+            val db = ZanoDatabase.build(context, "$base/Zano-${networkType.name}-${walletId}")
             val storage = ZanoStorage(db)
 
             // Restore in-memory sent transfer cache from DB so first fetchTransactions()
@@ -64,6 +65,14 @@ class ZanoKit private constructor(
     val transactionsFlow: StateFlow<List<TransactionInfo>> get() = core.transactionsFlow
 
     val receiveAddress: String get() = core.receiveAddress
+
+    val lastBlockHeight: Long?
+        get() = core.lastBlockHeight ?: storage.getBlockHeights()?.walletHeight?.takeIf { it > 0 }
+
+    val daemonBlockHeight: Long?
+        get() = core.lastDaemonHeight ?: storage.getBlockHeights()?.daemonHeight?.takeIf { it > 0 }
+
+    val lastBlockUpdatedFlow: Flow<Unit> get() = core.lastBlockUpdatedFlow ?: emptyFlow()
 
     val nativeBalance: BalanceInfo
         get() = storage.getBalance(ZANO_ASSET_ID) ?: BalanceInfo(ZANO_ASSET_ID, 0, 0, 0, 0)

@@ -74,6 +74,14 @@ class ZanoStorage(private val db: ZanoDatabase) {
     fun getCreationTimestamp(): Long? =
         db.walletInfoDao().get()?.creationTimestamp
 
+    // Block heights
+
+    fun saveBlockHeights(walletHeight: Long, daemonHeight: Long) {
+        db.blockHeightDao().insert(BlockHeightEntity(walletHeight = walletHeight, daemonHeight = daemonHeight))
+    }
+
+    fun getBlockHeights(): BlockHeightEntity? = db.blockHeightDao().get()
+
     // Full reset
 
     fun clearAll() {

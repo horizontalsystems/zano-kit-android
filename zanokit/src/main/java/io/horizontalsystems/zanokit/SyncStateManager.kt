@@ -1,8 +1,12 @@
 package io.horizontalsystems.zanokit
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 class SyncStateManager(
     private val api: ZanoWalletApi,
@@ -17,7 +21,14 @@ class SyncStateManager(
     private val _syncState = MutableStateFlow<SyncState>(SyncState.NotSynced.NotStarted)
     val syncStateFlow: StateFlow<SyncState> = _syncState
 
+    private val _lastBlockUpdatedFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val lastBlockUpdatedFlow: SharedFlow<Unit> = _lastBlockUpdatedFlow.asSharedFlow()
+
+    val currentWalletHeight: Long get() = walletHeight
+    val currentDaemonHeight: Long get() = daemonHeight
+
     var onSyncedPoll: (() -> Unit)? = null
+    var onBlockHeightsChanged: ((Long, Long) -> Unit)? = null
 
     private var job: Job? = null
     private var connectStartTime = 0L
@@ -75,11 +86,17 @@ class SyncStateManager(
         val status = api.getWalletStatus()
 
         if (status != null) {
+            val prevWalletHeight = walletHeight
+            val prevDaemonHeight = daemonHeight
             walletHeight = status.optLong("current_wallet_height", 0)
             daemonHeight = status.optLong("current_daemon_height", 0)
             isDaemonConnected = status.optBoolean("is_daemon_connected", false)
             _isInLongRefresh = status.optBoolean("is_in_long_refresh", false)
             if (lastStoredBlockHeight < restoreHeight) lastStoredBlockHeight = walletHeight
+            if (walletHeight != prevWalletHeight || daemonHeight != prevDaemonHeight) {
+                _lastBlockUpdatedFlow.tryEmit(Unit)
+                onBlockHeightsChanged?.invoke(walletHeight, daemonHeight)
+            }
         }
 
         val newState = evaluateState()

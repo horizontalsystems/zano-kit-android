@@ -116,6 +116,7 @@ class ZanoCore(
 
         syncManager = SyncStateManager(api, restoreHeight)
         syncManager.onSyncedPoll = { refresh() }
+        syncManager.onBlockHeightsChanged = { wh, dh -> storage.saveBlockHeights(wh, dh) }
         syncManager.start(scope)
 
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -174,6 +175,14 @@ class ZanoCore(
     }
 
     val receiveAddress: String get() = walletAddress
+
+    val lastBlockHeight: Long?
+        get() = if (::syncManager.isInitialized) syncManager.currentWalletHeight.takeIf { it > 0 } else null
+
+    val lastDaemonHeight: Long?
+        get() = if (::syncManager.isInitialized) syncManager.currentDaemonHeight.takeIf { it > 0 } else null
+
+    val lastBlockUpdatedFlow get() = if (::syncManager.isInitialized) syncManager.lastBlockUpdatedFlow else null
 
     private fun fetchBalances() {
         if (syncManager.isInLongRefresh) return
