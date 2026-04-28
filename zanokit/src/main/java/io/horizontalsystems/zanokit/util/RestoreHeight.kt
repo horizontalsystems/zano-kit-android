@@ -128,7 +128,7 @@ object RestoreHeight {
                 Date(prevDate.time + (daysOffset * 86400_000L).toLong())
             }
             else -> parseDate(sorted.first().key)
-        }
+        }.let { estimated -> if (estimated.after(Date())) Date() else estimated }
     }
 
     private fun parseDate(dateStr: String): Date {
