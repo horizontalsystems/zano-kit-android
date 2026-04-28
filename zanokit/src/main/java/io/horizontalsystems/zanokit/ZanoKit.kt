@@ -96,6 +96,14 @@ class ZanoKit private constructor(
                 File(core.walletDirPath()).deleteRecursively()
                 storage.clearAll()
                 core.start()
+            } catch (e: ZanoException) {
+                if (e.message in listOf("INVALID_FILE", "FAILED_TO_LOAD_FILE")) {
+                    File(core.walletDirPath()).deleteRecursively()
+                    storage.clearAll()
+                    core.start()
+                } else {
+                    throw e
+                }
             }
         }
     }
