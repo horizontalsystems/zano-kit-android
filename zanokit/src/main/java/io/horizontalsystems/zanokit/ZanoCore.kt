@@ -5,19 +5,23 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import org.json.JSONObject
 import io.horizontalsystems.zanokit.storage.ZanoStorage
 import io.horizontalsystems.zanokit.util.deriveZanoSecretKey
-import timber.log.Timber
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.File
 
 class ZanoCore(
     private val context: Context,
     private val wallet: ZanoWallet,
-    private val walletId: String,           // app-level identifier (e.g. UUID), used for file paths
+    private val walletId: String,
     private val daemonAddress: String,
     private val networkType: NetworkType,
     private val storage: ZanoStorage,
@@ -46,7 +50,9 @@ class ZanoCore(
         try {
             doStart()
         } catch (e: Exception) {
-            _syncStateFlow.value = SyncState.NotSynced.StartError(e.message)
+            if (e !is RestoreHeightDontMatchException)
+                _syncStateFlow.value = SyncState.NotSynced.StartError(e.message)
+
             throw e
         }
     }
@@ -68,6 +74,7 @@ class ZanoCore(
                 if (walletExisted) ZanoNative.openWallet("wallet", "")
                 else restoreFromBip39(wallet)
             }
+
             is ZanoWallet.Legacy -> {
                 val path = "$workingDir/wallet"
                 walletExisted = ZanoNative.isWalletExist(path)
@@ -131,6 +138,7 @@ class ZanoCore(
             override fun onAvailable(network: Network) {
                 syncManager.onNetworkAvailabilityChange(true)
             }
+
             override fun onLost(network: Network) {
                 syncManager.onNetworkAvailabilityChange(false)
             }
@@ -146,6 +154,7 @@ class ZanoCore(
                         runCatching { api.store() }
                         syncManager.walletStored()
                     }
+
                     else -> Unit
                 }
             }
@@ -195,22 +204,26 @@ class ZanoCore(
             val assetId = info.optString("asset_id")
             if (assetId.isEmpty()) continue
 
-            assets.add(AssetInfo(
-                assetId = assetId,
-                ticker = info.optString("ticker"),
-                fullName = info.optString("full_name"),
-                decimalPoint = info.optInt("decimal_point", 12),
-                totalMaxSupply = info.optLong("total_max_supply"),
-                currentSupply = info.optLong("current_supply"),
-                metaInfo = info.optString("meta_info").takeIf { it.isNotEmpty() },
-            ))
-            balances.add(BalanceInfo(
-                assetId = assetId,
-                total = entry.optLong("total"),
-                unlocked = entry.optLong("unlocked"),
-                awaitingIn = entry.optLong("awaiting_in"),
-                awaitingOut = entry.optLong("awaiting_out"),
-            ))
+            assets.add(
+                AssetInfo(
+                    assetId = assetId,
+                    ticker = info.optString("ticker"),
+                    fullName = info.optString("full_name"),
+                    decimalPoint = info.optInt("decimal_point", 12),
+                    totalMaxSupply = info.optLong("total_max_supply"),
+                    currentSupply = info.optLong("current_supply"),
+                    metaInfo = info.optString("meta_info").takeIf { it.isNotEmpty() },
+                )
+            )
+            balances.add(
+                BalanceInfo(
+                    assetId = assetId,
+                    total = entry.optLong("total"),
+                    unlocked = entry.optLong("unlocked"),
+                    awaitingIn = entry.optLong("awaiting_in"),
+                    awaitingOut = entry.optLong("awaiting_out"),
+                )
+            )
         }
 
         storage.updateAssets(assets)

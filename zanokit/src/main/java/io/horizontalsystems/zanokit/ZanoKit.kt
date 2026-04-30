@@ -33,8 +33,6 @@ class ZanoKit private constructor(
             val db = ZanoDatabase.build(context, "$base/Zano-${networkType.name}-${walletId}")
             val storage = ZanoStorage(db)
 
-            // Restore in-memory sent transfer cache from DB so first fetchTransactions()
-            // can enrich outgoing tx display even after a cold restart
             val core = ZanoCore(context, wallet, walletId, daemonAddress, networkType, storage)
             return ZanoKit(core, storage, UUID.randomUUID().toString())
         }
@@ -94,12 +92,12 @@ class ZanoKit private constructor(
             try {
                 core.start()
             } catch (e: RestoreHeightDontMatchException) {
+                Log.e("eee", "restart ZanoCore RestoreHeightDontMatchException: ${e.message}")
                 File(core.walletDirPath()).deleteRecursively()
                 storage.clearAll()
                 core.start()
             } catch (e: ZanoException) {
                 if (e.message in listOf("INVALID_FILE", "FAILED_TO_LOAD_FILE")) {
-
                     Log.e("eee", "restart ZanoCore: ${e.message}")
                     File(core.walletDirPath()).deleteRecursively()
                     storage.clearAll()
