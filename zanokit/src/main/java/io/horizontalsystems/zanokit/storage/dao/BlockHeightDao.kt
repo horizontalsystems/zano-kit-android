@@ -8,7 +8,7 @@ import io.horizontalsystems.zanokit.storage.entities.BlockHeightEntity
 
 @Dao
 interface BlockHeightDao {
-    @Query("SELECT * FROM BlockHeight WHERE id = 'single-row-id'")
+    @Query("SELECT * FROM block_height WHERE id = 'single-row-id'")
     fun get(): BlockHeightEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
