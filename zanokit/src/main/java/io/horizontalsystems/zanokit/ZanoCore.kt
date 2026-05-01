@@ -62,6 +62,7 @@ class ZanoCore(
         val workingDir = walletDir()
         File(workingDir).mkdirs()
 
+        ZanoNative.deinit()  // block until previous wallet's async cleanup (store, close) fully completes
         ZanoNative.init2(host, port, workingDir, 0)
 
         // restore_from_derivations prepends workingDir/wallets/ internally, so BIP39 wallets

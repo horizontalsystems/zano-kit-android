@@ -120,19 +120,13 @@ class ZanoKit private constructor(
             storage.clearAll()
             core.start()
         } catch (e: ZanoException) {
-            when (e.message) {
-                "ALREADY_EXISTS" -> {
-                    Log.e("eee", "restart ZanoCore after ALREADY_EXISTS — native cleanup still in progress, retrying in 3s")
-                    delay(3_000)
-                    core.start()
-                }
-                "INVALID_FILE", "FAILED_TO_LOAD_FILE" -> {
-                    Log.e("eee", "restart ZanoCore: ${e.message}")
-                    File(core.walletDirPath()).deleteRecursively()
-                    storage.clearAll()
-                    core.start()
-                }
-                else -> throw e
+            if (e.message in listOf("INVALID_FILE", "FAILED_TO_LOAD_FILE")) {
+                Log.e("eee", "restart ZanoCore: ${e.message}")
+                File(core.walletDirPath()).deleteRecursively()
+                storage.clearAll()
+                core.start()
+            } else {
+                throw e
             }
         }
     }

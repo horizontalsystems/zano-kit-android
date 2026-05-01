@@ -69,10 +69,8 @@ class SyncStateManager(
         }
     }
 
-    suspend fun stop() {
-        // Wait for any in-flight getWalletStatus() native call to finish before closeWallet
-        // is called, preventing ALREADY_EXISTS on the next open.
-        job?.cancelAndJoin()
+    fun stop() {
+        job?.cancel()
         job = null
         _syncState.value = SyncState.NotSynced.NotStarted
         walletHeight = 0L
