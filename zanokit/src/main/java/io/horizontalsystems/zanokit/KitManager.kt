@@ -1,24 +1,37 @@
 package io.horizontalsystems.zanokit
 
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
-// Ensures only one ZanoKit instance runs at a time.
-// A second start() call will suspend until the first kit stops.
 object KitManager {
-    private val mutex = Mutex()
-    private var runningKitId: String? = null
+    enum class KitState { Running, Waiting, Obsolete }
 
-    suspend fun waitAndRun(kitId: String, block: suspend () -> Unit) {
-        mutex.withLock { runningKitId = kitId }
-        try {
-            block()
-        } finally {
-            mutex.withLock {
-                if (runningKitId == kitId) runningKitId = null
-            }
+    private val lock = ReentrantLock()
+    private var runningKitId: String? = null
+    private var waitingKitId: String? = null
+
+    fun checkAndGetInitialState(kitId: String): KitState = lock.withLock {
+        if (runningKitId != null && runningKitId != kitId) {
+            waitingKitId = kitId
+            KitState.Waiting
+        } else {
+            runningKitId = kitId
+            KitState.Running
         }
     }
 
-    fun isRunning(kitId: String): Boolean = runningKitId == kitId
+    fun checkAndGetState(kitId: String): KitState = lock.withLock {
+        if (runningKitId != null && runningKitId != kitId) {
+            if (waitingKitId == kitId) KitState.Waiting else KitState.Obsolete
+        } else {
+            runningKitId = kitId
+            KitState.Running
+        }
+    }
+
+    fun removeRunning(kitId: String) = lock.withLock {
+        if (runningKitId == kitId) runningKitId = null
+    }
+
+    fun isRunning(kitId: String): Boolean = lock.withLock { runningKitId == kitId }
 }

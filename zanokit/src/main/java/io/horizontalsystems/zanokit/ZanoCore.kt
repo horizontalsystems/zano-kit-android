@@ -183,6 +183,10 @@ class ZanoCore(
         }
     }
 
+    fun setConnectingState(waiting: Boolean) {
+        _syncStateFlow.value = SyncState.Connecting(waiting = waiting)
+    }
+
     val receiveAddress: String get() = walletAddress
 
     val lastBlockHeight: Long?

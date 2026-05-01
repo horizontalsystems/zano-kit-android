@@ -6,12 +6,18 @@ import io.horizontalsystems.zanokit.storage.ZanoDatabase
 import io.horizontalsystems.zanokit.storage.ZanoStorage
 import io.horizontalsystems.zanokit.util.RestoreHeight
 import io.horizontalsystems.zanokit.util.deriveZanoSecretKey
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Date
 import java.util.UUID
+import java.util.concurrent.Executors
 
 class ZanoKit private constructor(
     private val core: ZanoCore,
@@ -57,6 +63,10 @@ class ZanoKit private constructor(
         }
     }
 
+    private val lifecycleDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+    private val lifecycleScope = CoroutineScope(lifecycleDispatcher + SupervisorJob())
+    private var started = false
+
     // Reactive state
     val syncStateFlow: StateFlow<SyncState> get() = core.syncStateFlow
     val assetsFlow: StateFlow<List<AssetInfo>> get() = core.assetsFlow
@@ -87,29 +97,46 @@ class ZanoKit private constructor(
 
     // Lifecycle
 
-    suspend fun start() {
-        KitManager.waitAndRun(kitId) {
-            try {
-                core.start()
-            } catch (e: RestoreHeightDontMatchException) {
-                Log.e("eee", "restart ZanoCore RestoreHeightDontMatchException: ${e.message}")
+    fun start() { lifecycleScope.launch { _start() } }
+    fun stop()  { lifecycleScope.launch { _stop()  } }
+
+    private suspend fun _start() {
+        if (started) return
+        started = true
+
+        var kitState = KitManager.checkAndGetInitialState(kitId)
+        while (kitState == KitManager.KitState.Waiting) {
+            core.setConnectingState(waiting = true)
+            delay(1_000)
+            kitState = KitManager.checkAndGetState(kitId)
+        }
+        if (kitState != KitManager.KitState.Running) return  // Obsolete — bail out
+
+        try {
+            core.start()
+        } catch (e: RestoreHeightDontMatchException) {
+            Log.e("eee", "restart ZanoCore RestoreHeightDontMatchException: ${e.message}")
+            File(core.walletDirPath()).deleteRecursively()
+            storage.clearAll()
+            core.start()
+        } catch (e: ZanoException) {
+            if (e.message in listOf("INVALID_FILE", "FAILED_TO_LOAD_FILE")) {
+                Log.e("eee", "restart ZanoCore: ${e.message}")
                 File(core.walletDirPath()).deleteRecursively()
                 storage.clearAll()
                 core.start()
-            } catch (e: ZanoException) {
-                if (e.message in listOf("INVALID_FILE", "FAILED_TO_LOAD_FILE")) {
-                    Log.e("eee", "restart ZanoCore: ${e.message}")
-                    File(core.walletDirPath()).deleteRecursively()
-                    storage.clearAll()
-                    core.start()
-                } else {
-                    throw e
-                }
+            } else {
+                throw e
             }
         }
     }
 
-    suspend fun stop() = core.stop()
+    private suspend fun _stop() {
+        if (!started) return
+        started = false
+        core.stop()
+        KitManager.removeRunning(kitId)
+    }
 
     fun refresh() = core.refresh()
 
