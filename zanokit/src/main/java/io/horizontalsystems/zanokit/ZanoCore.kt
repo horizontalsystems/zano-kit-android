@@ -62,8 +62,7 @@ class ZanoCore(
         val workingDir = walletDir()
         File(workingDir).mkdirs()
 
-        ZanoNative.deinit()  // block until previous wallet's async cleanup (store, close) fully completes
-        ZanoNative.init2(host, port, workingDir, 0)
+        ZanoWalletApi.init(host, port, workingDir, 0)
 
         // restore_from_derivations prepends workingDir/wallets/ internally, so BIP39 wallets
         // live at workingDir/wallets/wallet while legacy wallets live at workingDir/wallet.
@@ -71,16 +70,16 @@ class ZanoCore(
         val openResult: String? = when (wallet) {
             is ZanoWallet.Bip39 -> {
                 val path = "$workingDir/wallets/wallet"
-                walletExisted = ZanoNative.isWalletExist(path)
-                if (walletExisted) ZanoNative.openWallet("wallet", "")
+                walletExisted = ZanoWalletApi.isWalletExist(path)
+                if (walletExisted) ZanoWalletApi.openWallet("wallet", "")
                 else restoreFromBip39(wallet)
             }
 
             is ZanoWallet.Legacy -> {
                 val path = "$workingDir/wallet"
-                walletExisted = ZanoNative.isWalletExist(path)
-                if (walletExisted) ZanoNative.openWallet(path, "")
-                else ZanoNative.restoreWallet(wallet.seed, path, "", wallet.seedPassword)
+                walletExisted = ZanoWalletApi.isWalletExist(path)
+                if (walletExisted) ZanoWalletApi.openWallet(path, "")
+                else ZanoWalletApi.restoreWallet(wallet.seed, path, "", wallet.seedPassword)
             }
         }
 
@@ -104,7 +103,7 @@ class ZanoCore(
         if (wallet is ZanoWallet.Bip39) {
             val stored = storage.getCreationTimestamp()
             if (walletExisted && stored != null && stored != wallet.creationTimestamp) {
-                ZanoNative.closeWallet(nativeWalletId)
+                api.closeWallet()
                 nativeWalletId = -1
                 throw RestoreHeightDontMatchException()
             }
@@ -171,7 +170,7 @@ class ZanoCore(
         if (::syncManager.isInitialized) syncManager.stop()
         if (nativeWalletId >= 0) {
             runCatching { api.store() }
-            ZanoNative.closeWallet(nativeWalletId)
+            api.closeWallet()
             nativeWalletId = -1
         }
         scope.cancel()
@@ -374,7 +373,7 @@ class ZanoCore(
             put("is_auditable", false)
             put("creation_timestamp", wallet.creationTimestamp)
         }.toString()
-        return ZanoNative.syncCall("restore_from_derivations", 0, params)
+        return ZanoWalletApi.syncCall("restore_from_derivations", 0, params)
     }
 
     private fun walletDir(): String {

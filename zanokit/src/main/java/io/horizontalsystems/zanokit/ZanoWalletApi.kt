@@ -6,6 +6,11 @@ import timber.log.Timber
 
 class ZanoWalletApi(private val walletId: Long) {
 
+    fun closeWallet() {
+        ZanoNative.closeWallet(walletId)
+        ZanoNative.deinit()
+    }
+
     fun invoke(method: String, params: Map<String, Any>? = null): JSONObject? {
         val request = JSONObject().apply {
             put("method", method)
@@ -76,6 +81,28 @@ class ZanoWalletApi(private val walletId: Long) {
     }
 
     companion object {
+        fun init(host: String, port: String, workingDir: String, logLevel: Int) {
+            ZanoNative.init2(host, port, workingDir, logLevel)
+        }
+
+        fun isWalletExist(path: String): Boolean = ZanoNative.isWalletExist(path)
+
+        fun openWallet(path: String, password: String): String? = ZanoNative.openWallet(path, password)
+
+        fun restoreWallet(seed: String, path: String, password: String, seedPassword: String): String? =
+            ZanoNative.restoreWallet(seed, path, password, seedPassword)
+
+        fun syncCall(method: String, instanceId: Long, params: String): String? =
+            ZanoNative.syncCall(method, instanceId, params)
+
+        fun generateAddress(seed: String, seedPassword: String): String? =
+            ZanoNative.generateAddress(seed, seedPassword)
+
+        fun generateAddressFromDerivation(secretDerivationHex: String, isAuditable: Boolean): String? =
+            ZanoNative.generateAddressFromDerivation(secretDerivationHex, isAuditable)
+
+        fun getTimestampFromWord(word: String): Long = ZanoNative.getTimestampFromWord(word)
+
         // Keeps schema in host so C++ lib enables SSL.
         // "https://node:443" → ("https://node", "443")
         // "http://node:8081" → ("http://node", "8081")

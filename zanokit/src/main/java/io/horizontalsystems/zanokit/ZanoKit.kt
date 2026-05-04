@@ -52,12 +52,12 @@ class ZanoKit private constructor(
         // Derives the wallet address offline without opening the wallet.
         fun address(wallet: ZanoWallet): String? = when (wallet) {
             is ZanoWallet.Legacy ->
-                ZanoNative.generateAddress(wallet.seed, wallet.seedPassword)
+                ZanoWalletApi.generateAddress(wallet.seed, wallet.seedPassword)
                     ?.takeIf { it.isNotEmpty() }
 
             is ZanoWallet.Bip39 -> {
                 val hex = deriveZanoSecretKey(wallet.mnemonic, wallet.passphrase)
-                ZanoNative.generateAddressFromDerivation(hex, false)
+                ZanoWalletApi.generateAddressFromDerivation(hex, false)
                     ?.takeIf { it.isNotEmpty() }
             }
         }
