@@ -1,7 +1,6 @@
 package io.horizontalsystems.zanokit
 
 import android.content.Context
-import android.util.Log
 import io.horizontalsystems.zanokit.storage.ZanoDatabase
 import io.horizontalsystems.zanokit.storage.ZanoStorage
 import io.horizontalsystems.zanokit.util.RestoreHeight
@@ -114,13 +113,11 @@ class ZanoKit private constructor(
         try {
             core.start()
         } catch (e: RestoreHeightDontMatchException) {
-            Log.e("eee", "restart ZanoCore RestoreHeightDontMatchException: ${e.message}")
             File(core.walletDirPath()).deleteRecursively()
             storage.clearAll()
             core.start()
         } catch (e: ZanoException) {
             if (e.message in listOf("INVALID_FILE", "FAILED_TO_LOAD_FILE")) {
-                Log.e("eee", "restart ZanoCore: ${e.message}")
                 File(core.walletDirPath()).deleteRecursively()
                 storage.clearAll()
                 core.start()

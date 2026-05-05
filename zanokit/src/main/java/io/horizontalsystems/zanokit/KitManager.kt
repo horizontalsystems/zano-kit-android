@@ -1,6 +1,5 @@
 package io.horizontalsystems.zanokit
 
-import android.util.Log
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -14,11 +13,9 @@ object KitManager {
     fun checkAndGetInitialState(kitId: String): KitState = lock.withLock {
         if (runningKitId != null && runningKitId != kitId) {
             waitingKitId = kitId
-            Log.e("eee", "KitState: $kitId -> Waiting (running: $runningKitId)")
             KitState.Waiting
         } else {
             runningKitId = kitId
-            Log.e("eee", "KitState: $kitId -> Running")
             KitState.Running
         }
     }
@@ -26,15 +23,12 @@ object KitManager {
     fun checkAndGetState(kitId: String): KitState = lock.withLock {
         if (runningKitId != null && runningKitId != kitId) {
             if (waitingKitId == kitId) {
-                Log.e("eee", "KitState: $kitId -> still Waiting (running: $runningKitId)")
                 KitState.Waiting
             } else {
-                Log.e("eee", "KitState: $kitId -> Obsolete (waiting: $waitingKitId)")
                 KitState.Obsolete
             }
         } else {
             runningKitId = kitId
-            Log.e("eee", "KitState: $kitId -> Running (was waiting)")
             KitState.Running
         }
     }
@@ -42,7 +36,6 @@ object KitManager {
     fun removeRunning(kitId: String) = lock.withLock {
         if (runningKitId == kitId) {
             runningKitId = null
-            Log.e("eee", "KitState: $kitId -> removed from Running")
         }
     }
 
