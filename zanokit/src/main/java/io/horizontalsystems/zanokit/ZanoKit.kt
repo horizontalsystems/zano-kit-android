@@ -35,8 +35,7 @@ class ZanoKit private constructor(
             daemonAddress: String,
             networkType: NetworkType = NetworkType.MainNet,
         ): ZanoKit {
-            val base = context.dataDir.absolutePath
-            val db = ZanoDatabase.build(context, "$base/Zano-${networkType.name}-${walletId}")
+            val db = ZanoDatabase.build(context, "Zano-${networkType.name}-${walletId}")
             val storage = ZanoStorage(db)
 
             val core = ZanoCore(context, wallet, walletId, daemonAddress, networkType, storage)
