@@ -8,6 +8,7 @@ import io.horizontalsystems.zanokit.util.deriveZanoSecretKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -113,11 +114,13 @@ class ZanoKit private constructor(
         try {
             core.start()
         } catch (e: RestoreHeightDontMatchException) {
+            if (!started) return  // was stopped while starting — another kit owns the native lib now
             File(core.walletDirPath()).deleteRecursively()
             storage.clearAll()
             core.start()
         } catch (e: ZanoException) {
             if (e.message in listOf("INVALID_FILE", "FAILED_TO_LOAD_FILE")) {
+                if (!started) return  // was stopped while starting
                 File(core.walletDirPath()).deleteRecursively()
                 storage.clearAll()
                 core.start()
@@ -132,6 +135,8 @@ class ZanoKit private constructor(
         started = false
         core.stop()
         KitManager.removeRunning(kitId)
+        lifecycleScope.cancel()
+        lifecycleDispatcher.close()
     }
 
     fun refresh() = core.refresh()
