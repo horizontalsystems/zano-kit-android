@@ -16,8 +16,20 @@ class ZanoWalletApi(private val walletId: Long) {
             put("method", method)
             params?.let { put("params", JSONObject(it)) }
         }
-        val raw = ZanoNative.invoke(walletId, request.toString()) ?: return null
-        return parseResult(raw)
+        Timber.d("→ invoke[$walletId] $method ${if (params != null) params.toString() else ""}")
+        val t0 = System.currentTimeMillis()
+        val raw = ZanoNative.invoke(walletId, request.toString()) ?: run {
+            Timber.w("← invoke[$walletId] $method null response (${System.currentTimeMillis() - t0}ms)")
+            return null
+        }
+        val elapsed = System.currentTimeMillis() - t0
+        val result = parseResult(raw)
+        if (result != null) {
+            Timber.d("← invoke[$walletId] $method OK (${elapsed}ms)")
+        } else {
+            Timber.w("← invoke[$walletId] $method ERROR (${elapsed}ms): $raw")
+        }
+        return result
     }
 
     fun getWalletStatus(): JSONObject? {
@@ -65,15 +77,20 @@ class ZanoWalletApi(private val walletId: Long) {
             put("method", "transfer")
             put("params", paramsObj)
         }
+        Timber.i("→ transfer[$walletId] to=$toAddress assetId=$assetId amount=$amount fee=$fee")
+        val t0 = System.currentTimeMillis()
         val raw = ZanoNative.invoke(walletId, request.toString())
             ?: throw ZanoException("transfer: null response")
         val result = parseResult(raw) ?: run {
             val errorMsg = try {
                 JSONObject(raw).optJSONObject("error")?.optString("message")
             } catch (_: Exception) { null }
+            Timber.w("← transfer[$walletId] ERROR (${System.currentTimeMillis() - t0}ms): $errorMsg")
             throw parseTransferError(errorMsg)
         }
-        return result.getString("tx_hash")
+        val txHash = result.getString("tx_hash")
+        Timber.i("← transfer[$walletId] OK (${System.currentTimeMillis() - t0}ms) txHash=$txHash")
+        return txHash
     }
 
     fun store() {
@@ -82,6 +99,7 @@ class ZanoWalletApi(private val walletId: Long) {
 
     companion object {
         fun init(host: String, port: String, workingDir: String, logLevel: Int) {
+            Timber.i("ZanoWalletApi.init node=$host:$port")
             ZanoNative.init2(host, port, workingDir, logLevel)
         }
 
