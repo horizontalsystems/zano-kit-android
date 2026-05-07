@@ -7,6 +7,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -20,12 +23,27 @@ fun BalanceScreen(vm: MainViewModel) {
     val syncState by vm.syncStateFlow.collectAsState()
     val balances by vm.balancesFlow.collectAsState()
     val assets by vm.assetsFlow.collectAsState()
+    var showStatus by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("Balances", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
 
         SyncStateCard(syncState)
+        Spacer(Modifier.height(8.dp))
+
+        OutlinedButton(
+            onClick = { showStatus = !showStatus },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (showStatus) "Hide Status" else "Show Status")
+        }
+
+        if (showStatus) {
+            Spacer(Modifier.height(8.dp))
+            StatusInfoCard(vm.kit.statusInfo())
+        }
+
         Spacer(Modifier.height(12.dp))
 
         if (balances.isEmpty()) {
@@ -37,6 +55,22 @@ fun BalanceScreen(vm: MainViewModel) {
                 items(balances) { balance ->
                     val asset = assets.firstOrNull { it.assetId == balance.assetId }
                     BalanceCard(balance, asset?.ticker ?: "???", asset?.decimalPoint ?: 12)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StatusInfoCard(info: Map<String, Any>) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Status", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(2.dp))
+            info.forEach { (key, value) ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(key, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                    Text(value.toString(), style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

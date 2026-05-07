@@ -34,7 +34,8 @@ class SyncStateManager(
     private var connectStartTime = 0L
 
     private var isNetworkAvailable = true
-    private var isDaemonConnected = false
+    private var _isDaemonConnected = false
+    val isDaemonConnected get() = _isDaemonConnected
     val isInLongRefresh get() = _isInLongRefresh
     private var _isInLongRefresh = false
     private var walletHeight = 0L
@@ -77,7 +78,7 @@ class SyncStateManager(
         daemonHeight = 0L
         lastRefreshedHeight = 0L
         lastStoredBlockHeight = 0L
-        isDaemonConnected = false
+        _isDaemonConnected = false
         _isInLongRefresh = false
         isNetworkAvailable = true
     }
@@ -90,7 +91,7 @@ class SyncStateManager(
             val prevDaemonHeight = daemonHeight
             walletHeight = status.optLong("current_wallet_height", 0)
             daemonHeight = status.optLong("current_daemon_height", 0)
-            isDaemonConnected = status.optBoolean("is_daemon_connected", false)
+            _isDaemonConnected = status.optBoolean("is_daemon_connected", false)
             _isInLongRefresh = status.optBoolean("is_in_long_refresh", false)
             if (lastStoredBlockHeight < restoreHeight) lastStoredBlockHeight = walletHeight
             if (walletHeight != prevWalletHeight || daemonHeight != prevDaemonHeight) {

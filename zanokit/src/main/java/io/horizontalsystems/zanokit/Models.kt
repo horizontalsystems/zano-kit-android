@@ -28,12 +28,12 @@ sealed class SendAmount {
 }
 
 sealed class SyncState {
-    object Synced : SyncState()
+    object Synced : SyncState() { override fun toString() = "Synced" }
     data class Connecting(val waiting: Boolean) : SyncState()
     data class Syncing(val progress: Int, val remainingBlocks: Long) : SyncState()
     sealed class NotSynced : SyncState() {
-        object NotStarted : NotSynced()
-        object NoNetwork : NotSynced()
+        object NotStarted : NotSynced() { override fun toString() = "NotStarted" }
+        object NoNetwork : NotSynced() { override fun toString() = "NoNetwork" }
         data class StartError(val message: String?) : NotSynced()
         data class StatusError(val message: String?) : NotSynced()
     }

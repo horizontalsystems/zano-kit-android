@@ -21,13 +21,14 @@ class ZanoCore(
     private val context: Context,
     private val wallet: ZanoWallet,
     private val walletId: String,
-    private val daemonAddress: String,
-    private val networkType: NetworkType,
+    val daemonAddress: String,
+    val networkType: NetworkType,
     private val storage: ZanoStorage,
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var nativeWalletId: Long = -1
+    private var _restoreHeight: Long = 0L
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var walletAddress: String = ""
     private lateinit var api: ZanoWalletApi
@@ -113,14 +114,14 @@ class ZanoCore(
 
         walletAddress = resultObj.optJSONObject("wi")?.optString("address") ?: ""
 
-        val restoreHeight = wallet.restoreHeight
+        _restoreHeight = wallet.restoreHeight
 
         // Emit cached state immediately so UI isn't blank while syncing
         _balancesFlow.value = storage.getAllBalances()
         _assetsFlow.value = storage.getAllAssets()
         _transactionsFlow.value = storage.getTransactions()
 
-        syncManager = SyncStateManager(api, restoreHeight)
+        syncManager = SyncStateManager(api, _restoreHeight)
         syncManager.onSyncedPoll = { refresh() }
         syncManager.onBlockHeightsChanged = { wh, dh -> storage.saveBlockHeights(wh, dh) }
         syncManager.start(scope)
@@ -195,6 +196,9 @@ class ZanoCore(
     }
 
     val receiveAddress: String get() = walletAddress
+    val restoreHeight: Long get() = _restoreHeight
+    val isDaemonConnected: Boolean get() = if (::syncManager.isInitialized) syncManager.isDaemonConnected else false
+    val isInLongRefresh: Boolean get() = if (::syncManager.isInitialized) syncManager.isInLongRefresh else false
 
     val lastBlockHeight: Long?
         get() = if (::syncManager.isInitialized) syncManager.currentWalletHeight.takeIf { it > 0 } else null

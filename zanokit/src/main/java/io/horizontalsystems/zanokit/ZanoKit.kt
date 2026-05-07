@@ -172,4 +172,17 @@ class ZanoKit private constructor(
 
     fun estimateFee(priority: SendPriority = SendPriority.default): Long =
         ZanoWalletApi.getCurrentTxFee(priority.value)
+
+    fun statusInfo(): Map<String, Any> {
+        val info = LinkedHashMap<String, Any>()
+        info["Sync State"] = syncStateFlow.value.toString()
+        info["Last Block Height"] = lastBlockHeight ?: 0L
+        info["Daemon Height"] = daemonBlockHeight ?: 0L
+        info["Restore Height"] = core.restoreHeight
+        info["Is Daemon Connected"] = core.isDaemonConnected
+        info["Is In Long Refresh"] = core.isInLongRefresh
+        info["Network"] = core.networkType.name
+        info["Node"] = core.daemonAddress
+        return info
+    }
 }
