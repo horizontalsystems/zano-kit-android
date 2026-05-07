@@ -1,7 +1,6 @@
 package io.horizontalsystems.zanokit.sample
 
 import android.app.Application
-import androidx.compose.foundation.layout.Box
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.horizontalsystems.zanokit.*
@@ -35,7 +34,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val sendError: StateFlow<String?> = _sendError
 
     init {
-
         val address = ZanoKit.address(ZanoWallet.Bip39(WalletConfig.SEED, WalletConfig.PASSPHRASE, 0))
         Timber.e("++++++++++++ Address: $address")
 

@@ -2,6 +2,7 @@ package io.horizontalsystems.zanokit
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.util.Log
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
@@ -148,8 +149,12 @@ class ZanoCore(
             syncManager.syncStateFlow.collect { newState ->
                 _syncStateFlow.value = newState
                 when (newState) {
-                    is SyncState.Synced -> runCatching { api.store() }
+                    is SyncState.Synced -> {
+                        Log.d("ZanoCore", "store: synced")
+                        runCatching { api.store() }
+                    }
                     is SyncState.Syncing -> if (syncManager.chunkOfBlocksSynced) {
+                        Log.d("ZanoCore", "store: chunk(${syncManager.currentWalletHeight})")
                         refresh()
                         runCatching { api.store() }
                         syncManager.walletStored()
@@ -169,11 +174,19 @@ class ZanoCore(
         }
         if (::syncManager.isInitialized) syncManager.stop()
         if (nativeWalletId >= 0) {
+            Log.d("ZanoCore", "store: stop")
             runCatching { api.store() }
             api.closeWallet()
             nativeWalletId = -1
         }
         scope.cancel()
+    }
+
+    fun store() {
+        if (nativeWalletId >= 0) {
+            Log.d("ZanoCore", "store: background")
+            runCatching { api.store() }
+        }
     }
 
     fun refresh() {

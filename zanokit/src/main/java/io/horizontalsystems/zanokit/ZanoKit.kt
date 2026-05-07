@@ -139,6 +139,8 @@ class ZanoKit private constructor(
         lifecycleDispatcher.close()
     }
 
+    fun store() { lifecycleScope.launch { runCatching { core.store() } } }
+
     fun refresh() = core.refresh()
 
     // Sending
