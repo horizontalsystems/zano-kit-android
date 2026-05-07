@@ -47,7 +47,7 @@ class ZanoCore(
     private val _transactionsFlow = MutableStateFlow<List<TransactionInfo>>(emptyList())
     val transactionsFlow: StateFlow<List<TransactionInfo>> = _transactionsFlow
 
-    suspend fun start() = withContext(Dispatchers.IO) {
+    suspend fun start() {
         try {
             doStart()
         } catch (e: Exception) {
@@ -166,7 +166,7 @@ class ZanoCore(
         }
     }
 
-    suspend fun stop() = withContext(Dispatchers.IO) {
+    suspend fun stop() {
         networkCallback?.let {
             (context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
                 .unregisterNetworkCallback(it)
