@@ -5,10 +5,19 @@ import io.horizontalsystems.zanokit.storage.ZanoDatabase
 import io.horizontalsystems.zanokit.storage.ZanoStorage
 import io.horizontalsystems.zanokit.util.RestoreHeight
 import io.horizontalsystems.zanokit.util.deriveZanoSecretKey
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Date
 import java.util.UUID
+import java.util.concurrent.Executors
 
 class ZanoKit private constructor(
     private val core: ZanoCore,
@@ -24,15 +33,11 @@ class ZanoKit private constructor(
             wallet: ZanoWallet,
             walletId: String,
             daemonAddress: String,
-            networkType: NetworkType = NetworkType.mainnet,
+            networkType: NetworkType = NetworkType.MainNet,
         ): ZanoKit {
-            val base = context.filesDir.absolutePath
-            val baseDir = "$base/ZanoKit/$walletId/network_${networkType.value}"
-            val db = ZanoDatabase.build(context, "$baseDir/storage")
+            val db = ZanoDatabase.build(context, "Zano-${networkType.name}-${walletId}")
             val storage = ZanoStorage(db)
 
-            // Restore in-memory sent transfer cache from DB so first fetchTransactions()
-            // can enrich outgoing tx display even after a cold restart
             val core = ZanoCore(context, wallet, walletId, daemonAddress, networkType, storage)
             return ZanoKit(core, storage, UUID.randomUUID().toString())
         }
@@ -46,16 +51,20 @@ class ZanoKit private constructor(
         // Derives the wallet address offline without opening the wallet.
         fun address(wallet: ZanoWallet): String? = when (wallet) {
             is ZanoWallet.Legacy ->
-                ZanoNative.generateAddress(wallet.seed, wallet.seedPassword)
+                ZanoWalletApi.generateAddress(wallet.seed, wallet.seedPassword)
                     ?.takeIf { it.isNotEmpty() }
 
             is ZanoWallet.Bip39 -> {
                 val hex = deriveZanoSecretKey(wallet.mnemonic, wallet.passphrase)
-                ZanoNative.generateAddressFromDerivation(hex, false)
+                ZanoWalletApi.generateAddressFromDerivation(hex, false)
                     ?.takeIf { it.isNotEmpty() }
             }
         }
     }
+
+    private val lifecycleDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+    private val lifecycleScope = CoroutineScope(lifecycleDispatcher + SupervisorJob())
+    private var started = false
 
     // Reactive state
     val syncStateFlow: StateFlow<SyncState> get() = core.syncStateFlow
@@ -64,6 +73,14 @@ class ZanoKit private constructor(
     val transactionsFlow: StateFlow<List<TransactionInfo>> get() = core.transactionsFlow
 
     val receiveAddress: String get() = core.receiveAddress
+
+    val lastBlockHeight: Long?
+        get() = core.lastBlockHeight ?: storage.getBlockHeights()?.walletHeight?.takeIf { it > 0 }
+
+    val daemonBlockHeight: Long?
+        get() = core.lastDaemonHeight ?: storage.getBlockHeights()?.daemonHeight?.takeIf { it > 0 }
+
+    val lastBlockUpdatedFlow: Flow<Unit> get() = core.lastBlockUpdatedFlow ?: emptyFlow()
 
     val nativeBalance: BalanceInfo
         get() = storage.getBalance(ZANO_ASSET_ID) ?: BalanceInfo(ZANO_ASSET_ID, 0, 0, 0, 0)
@@ -79,19 +96,50 @@ class ZanoKit private constructor(
 
     // Lifecycle
 
-    suspend fun start() {
-        KitManager.waitAndRun(kitId) {
-            try {
-                core.start()
-            } catch (e: RestoreHeightDontMatchException) {
+    fun start() { lifecycleScope.launch { _start() } }
+    fun stop()  { lifecycleScope.launch { _stop() } }
+
+    private suspend fun _start() {
+        if (started) return
+        started = true
+
+        var kitState = KitManager.checkAndGetInitialState(kitId)
+        while (kitState == KitManager.KitState.Waiting) {
+            core.setConnectingState(waiting = true)
+            delay(1_000)
+            kitState = KitManager.checkAndGetState(kitId)
+        }
+        if (kitState != KitManager.KitState.Running) return
+
+        try {
+            core.start()
+        } catch (_: RestoreHeightDontMatchException) {
+            if (!started) return  // was stopped while starting — another kit owns the native lib now
+            File(core.walletDirPath()).deleteRecursively()
+            storage.clearAll()
+            core.start()
+        } catch (e: ZanoException) {
+            if (e.message in listOf("INVALID_FILE", "FAILED_TO_LOAD_FILE")) {
+                if (!started) return  // was stopped while starting
                 File(core.walletDirPath()).deleteRecursively()
                 storage.clearAll()
                 core.start()
+            } else {
+                throw e
             }
         }
     }
 
-    suspend fun stop() = core.stop()
+    private fun _stop() {
+        if (!started) return
+        started = false
+        core.stop()
+        KitManager.removeRunning(kitId)
+        lifecycleScope.cancel()
+        lifecycleDispatcher.close()
+    }
+
+    fun store() { lifecycleScope.launch { runCatching { core.store() } } }
 
     fun refresh() = core.refresh()
 

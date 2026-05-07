@@ -14,6 +14,7 @@ import io.horizontalsystems.zanokit.storage.entities.*
         TransactionEntity::class,
         SentTransferEntity::class,
         WalletInfoEntity::class,
+        BlockHeightEntity::class,
     ],
     version = 1,
     exportSchema = false,
@@ -24,6 +25,7 @@ abstract class ZanoDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun sentTransferDao(): SentTransferDao
     abstract fun walletInfoDao(): WalletInfoDao
+    abstract fun blockHeightDao(): BlockHeightDao
 
     companion object {
         fun build(context: Context, dbPath: String): ZanoDatabase {

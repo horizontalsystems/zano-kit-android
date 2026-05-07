@@ -32,7 +32,7 @@ sealed class ZanoWallet {
             is Bip39 -> RestoreHeight.getHeight(creationTimestamp)
             is Legacy -> {
                 val timestampWord = if (mnemonic.size >= 25) mnemonic[24] else ""
-                RestoreHeight.getHeight(ZanoNative.getTimestampFromWord(timestampWord))
+                RestoreHeight.getHeight(ZanoWalletApi.getTimestampFromWord(timestampWord))
             }
         }
 }

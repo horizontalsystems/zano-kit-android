@@ -208,7 +208,7 @@ zanokit/src/main/java/io/horizontalsystems/zanokit/
 ├── Models.kt              data classes + sealed classes (SyncState, AssetInfo, BalanceInfo, etc.)
 ├── ZanoCore.kt            wallet lifecycle: start/stop/refresh, fetchBalances, fetchTransactions
 ├── SyncStateManager.kt    5s polling loop, network reachability guard, evaluateState() → SyncState
-├── KitManager.kt          Mutex singleton — enforces one active kit at a time
+├── KitManager.kt          ReentrantLock singleton — enforces one active kit at a time
 ├── ZanoKit.kt             public API facade; address(wallet) for offline address derivation
 ├── util/
 │   ├── RestoreHeight.kt   date → block height lookup (checkpoint table May 2019–Apr 2026)
@@ -276,6 +276,19 @@ NoNetwork ←→ Connecting(waiting=false)
 - `api.store()` called on every `Synced` state and every 2000 blocks during `Syncing`
 - Network reachability monitored via `ConnectivityManager.NetworkCallback` — transitions to `NoNetwork` immediately on connectivity loss, resumes `Connecting` when network returns
 
+### Lifecycle Threading
+
+`ZanoKit` uses a single-threaded `lifecycleScope` (`Executors.newSingleThreadExecutor().asCoroutineDispatcher()`). Both `start()` and `stop()` dispatch work onto this executor:
+
+```kotlin
+fun start() { lifecycleScope.launch { _start() } }
+fun stop()  { lifecycleScope.launch { _stop()  } }
+```
+
+`_start()` is `suspend` (uses `delay()` while waiting for `KitManager`). `_stop()` is a plain `fun`.
+
+`ZanoCore.start()` and `ZanoCore.stop()` are also plain (non-suspend) functions. **This is intentional.** If they used `withContext(Dispatchers.IO)`, the lifecycleScope coroutine would suspend mid-execution, freeing the single thread to run `_stop()`. That would allow `_stop()` to call `KitManager.removeRunning()` while `doStart()` was still executing on a Dispatchers.IO thread — letting a second kit enter `doStart()` concurrently for the same wallet file. By keeping `start()`/`stop()` non-suspending, `doStart()` holds the lifecycleScope thread for its entire duration, and `_stop()` is guaranteed to run only after `_start()` fully completes.
+
 ### BIP39 Timestamp Mismatch Recovery
 
 On BIP39 wallet open, `ZanoCore` compares the wallet's `creationTimestamp` against the value stored in the Room DB. If they differ, the wallet directory and DB are wiped and `start()` retries once. This handles the case where a wallet was previously synced from a different restore height. The exception type is `RestoreHeightDontMatchException`; `ZanoKit.start()` catches it, deletes `core.walletDirPath()`, calls `storage.clearAll()`, then calls `core.start()` again.
@@ -285,7 +298,9 @@ On BIP39 wallet open, `ZanoCore` compares the wallet's `creationTimestamp` again
 ```
 filesDir/ZanoKit/{walletId}/network_{0|1}/
 ├── zano_core/
-│   └── wallet          ← Zano binary wallet file
+│   ├── wallets/
+│   │   └── wallet      ← BIP39 wallet file (restore_from_derivations prepends wallets/)
+│   └── wallet          ← Legacy wallet file
 └── storage             ← Room database
 ```
 
