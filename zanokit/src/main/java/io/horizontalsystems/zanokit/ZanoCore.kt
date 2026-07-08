@@ -183,12 +183,14 @@ class ZanoCore(
             networkCallback = null
         }
         if (::syncManager.isInitialized) syncManager.stop()
+        // Cancel before closing so polls/refreshes stop issuing native calls;
+        // one already executing finishes first under the ZanoWalletApi lock.
+        scope.cancel()
         if (nativeWalletId >= 0) {
             runCatching { api.store() }
             api.closeWallet()
             nativeWalletId = -1
         }
-        scope.cancel()
     }
 
     fun store() {

@@ -7,8 +7,10 @@ import timber.log.Timber
 class ZanoWalletApi(private val walletId: Long) {
 
     fun closeWallet() {
-        ZanoNative.closeWallet(walletId)
-        ZanoNative.deinit()
+        synchronized(nativeLock) {
+            ZanoNative.closeWallet(walletId)
+            ZanoNative.deinit()
+        }
     }
 
     fun invoke(method: String, params: Map<String, Any>? = null): JSONObject? {
@@ -16,12 +18,12 @@ class ZanoWalletApi(private val walletId: Long) {
             put("method", method)
             params?.let { put("params", JSONObject(it)) }
         }
-        val raw = ZanoNative.invoke(walletId, request.toString()) ?: return null
+        val raw = synchronized(nativeLock) { ZanoNative.invoke(walletId, request.toString()) } ?: return null
         return parseResult(raw)
     }
 
     fun getWalletStatus(): JSONObject? {
-        val raw = ZanoNative.getWalletStatus(walletId) ?: return null
+        val raw = synchronized(nativeLock) { ZanoNative.getWalletStatus(walletId) } ?: return null
         return try { JSONObject(raw) } catch (_: Exception) { null }
     }
 
@@ -65,7 +67,7 @@ class ZanoWalletApi(private val walletId: Long) {
             put("method", "transfer")
             put("params", paramsObj)
         }
-        val raw = ZanoNative.invoke(walletId, request.toString())
+        val raw = synchronized(nativeLock) { ZanoNative.invoke(walletId, request.toString()) }
             ?: throw ZanoException("transfer: null response")
         val result = parseResult(raw) ?: run {
             val errorMsg = try {
@@ -81,19 +83,27 @@ class ZanoWalletApi(private val walletId: Long) {
     }
 
     companion object {
+        // Serializes every engine-touching native call process-wide: the native
+        // engine is a global singleton and closeWallet/deinit must never overlap
+        // an in-flight call (use-after-free otherwise — cancelling a coroutine
+        // does not interrupt a blocking JNI call already executing). Pure crypto
+        // helpers (address generation/validation, seed words) don't take it.
+        private val nativeLock = Any()
+
         fun init(host: String, port: String, workingDir: String, logLevel: Int) {
-            ZanoNative.init2(host, port, workingDir, logLevel)
+            synchronized(nativeLock) { ZanoNative.init2(host, port, workingDir, logLevel) }
         }
 
         fun isWalletExist(path: String): Boolean = ZanoNative.isWalletExist(path)
 
-        fun openWallet(path: String, password: String): String? = ZanoNative.openWallet(path, password)
+        fun openWallet(path: String, password: String): String? =
+            synchronized(nativeLock) { ZanoNative.openWallet(path, password) }
 
         fun restoreWallet(seed: String, path: String, password: String, seedPassword: String): String? =
-            ZanoNative.restoreWallet(seed, path, password, seedPassword)
+            synchronized(nativeLock) { ZanoNative.restoreWallet(seed, path, password, seedPassword) }
 
         fun syncCall(method: String, instanceId: Long, params: String): String? =
-            ZanoNative.syncCall(method, instanceId, params)
+            synchronized(nativeLock) { ZanoNative.syncCall(method, instanceId, params) }
 
         fun generateAddress(seed: String, seedPassword: String): String? =
             ZanoNative.generateAddress(seed, seedPassword)
@@ -142,7 +152,7 @@ class ZanoWalletApi(private val walletId: Long) {
         }
 
         fun getCurrentTxFee(priority: Int): Long {
-            return ZanoNative.getCurrentTxFee(priority.toLong())
+            return synchronized(nativeLock) { ZanoNative.getCurrentTxFee(priority.toLong()) }
         }
 
         // Parses {"result":{...},"error":{"code":Int,"message":String}} → result object or throws
