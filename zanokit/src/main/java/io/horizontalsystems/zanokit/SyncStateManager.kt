@@ -55,6 +55,10 @@ class SyncStateManager(
     }
 
     fun onNetworkAvailabilityChange(available: Boolean) {
+        // Fresh timeout window on reconnect, otherwise the long-expired
+        // connectStartTime turns the state into "Connection timed out"
+        // instead of Connecting while the daemon re-establishes.
+        if (available && !isNetworkAvailable) connectStartTime = System.currentTimeMillis()
         isNetworkAvailable = available
         checkSyncState()
     }

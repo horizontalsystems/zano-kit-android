@@ -7,12 +7,14 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import io.horizontalsystems.zanokit.storage.ZanoStorage
 import io.horizontalsystems.zanokit.util.deriveZanoSecretKey
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
@@ -25,7 +27,16 @@ class ZanoCore(
     val networkType: NetworkType,
     private val storage: ZanoStorage,
 ) {
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // Recreated on every start so the kit can be stopped and started again.
+    // The handler keeps uncaught exceptions in background polls from crashing
+    // the host app.
+    private var scope = createScope()
+
+    private fun createScope() = CoroutineScope(
+        Dispatchers.IO + SupervisorJob() + CoroutineExceptionHandler { _, e ->
+            _syncStateFlow.value = SyncState.NotSynced.StatusError(e.message)
+        }
+    )
 
     private var nativeWalletId: Long = -1
     private var _restoreHeight: Long = 0L
@@ -58,6 +69,8 @@ class ZanoCore(
     }
 
     private fun doStart() {
+        if (!scope.isActive) scope = createScope()  // restarted after stop()
+
         val (host, port) = ZanoWalletApi.parseAddress(daemonAddress)
         val workingDir = walletDir()
         File(workingDir).mkdirs()
@@ -185,6 +198,8 @@ class ZanoCore(
     }
 
     fun refresh() {
+        // May be called by the host app before start() has completed (or after it failed)
+        if (!::api.isInitialized || !::syncManager.isInitialized) return
         scope.launch(Dispatchers.IO) {
             fetchBalances()
             fetchTransactions()
@@ -193,6 +208,10 @@ class ZanoCore(
 
     fun setConnectingState(waiting: Boolean) {
         _syncStateFlow.value = SyncState.Connecting(waiting = waiting)
+    }
+
+    fun setStartError(message: String?) {
+        _syncStateFlow.value = SyncState.NotSynced.StartError(message)
     }
 
     val receiveAddress: String get() = walletAddress

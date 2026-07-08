@@ -1,5 +1,6 @@
 package io.horizontalsystems.zanokit
 
+import kotlinx.coroutines.sync.Mutex
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -9,6 +10,18 @@ object KitManager {
     private val lock = ReentrantLock()
     private var runningKitId: String? = null
     private var waitingKitId: String? = null
+
+    // Serializes the native wallet lifecycle (startCore/stopCore). It lives
+    // here (global, shared by all kits) so the invariant "only one wallet is
+    // opened or closed at a time" holds process-wide, matching the fact that
+    // the native wallet library is a global singleton.
+    // Cross-kit ORDERING during an account switch is already guaranteed by the
+    // runningKitId gate below (removeRunning() runs after stopCore(), so a new
+    // kit opens only after the previous one closed); the shared lock also
+    // prevents a kit's own _stop from tearing down a wallet while its _start
+    // is still opening it. Separate from `lock`, which only guards the
+    // running/waiting bookkeeping.
+    val lifecycleMutex = Mutex()
 
     fun checkAndGetInitialState(kitId: String): KitState = lock.withLock {
         if (runningKitId != null && runningKitId != kitId) {

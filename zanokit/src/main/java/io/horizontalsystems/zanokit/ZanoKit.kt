@@ -8,12 +8,12 @@ import io.horizontalsystems.zanokit.util.deriveZanoSecretKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.Date
 import java.util.UUID
@@ -103,40 +103,71 @@ class ZanoKit private constructor(
         if (started) return
         started = true
 
+        core.setConnectingState(waiting = true)
+
         var kitState = KitManager.checkAndGetInitialState(kitId)
         while (kitState == KitManager.KitState.Waiting) {
-            core.setConnectingState(waiting = true)
             delay(1_000)
+            if (!started) return  // stop() was called while waiting
             kitState = KitManager.checkAndGetState(kitId)
         }
         if (kitState != KitManager.KitState.Running) return
 
-        try {
-            core.start()
-        } catch (_: RestoreHeightDontMatchException) {
-            if (!started) return  // was stopped while starting — another kit owns the native lib now
-            File(core.walletDirPath()).deleteRecursively()
-            storage.clearAll()
-            core.start()
-        } catch (e: ZanoException) {
-            if (e.message in listOf("INVALID_FILE", "FAILED_TO_LOAD_FILE")) {
-                if (!started) return  // was stopped while starting
-                File(core.walletDirPath()).deleteRecursively()
-                storage.clearAll()
-                core.start()
-            } else {
-                throw e
-            }
+        // Global lock (shared across ALL kits) taken only here, AFTER the
+        // KitManager wait loop, so a concurrent stop() can still flip `started`
+        // (polled by the loop above) to break us out of waiting — no deadlock.
+        KitManager.lifecycleMutex.withLock {
+            if (!started) return  // stop() superseded us before we opened anything
+            core.setConnectingState(waiting = false)
+            startCore()
         }
     }
 
-    private fun _stop() {
+    private suspend fun _stop() {
         if (!started) return
         started = false
-        core.stop()
-        KitManager.removeRunning(kitId)
-        lifecycleScope.cancel()
-        lifecycleDispatcher.close()
+        // Same lock _start() uses: an in-flight startCore() finishes first, so we
+        // never tear down a wallet mid-open. stopCore() always runs: every started
+        // wallet is stopped, no skipping. The lifecycle scope stays alive so the
+        // kit can be started again.
+        KitManager.lifecycleMutex.withLock {
+            stopCore()
+            KitManager.removeRunning(kitId)
+        }
+    }
+
+    // Never throws: every failure ends up published via syncStateFlow as
+    // NotSynced.StartError.
+    private fun startCore(): Boolean {
+        try {
+            try {
+                core.start()
+            } catch (_: RestoreHeightDontMatchException) {
+                recreateWalletAndStart()
+            } catch (e: ZanoException) {
+                if (e.message in listOf("INVALID_FILE", "FAILED_TO_LOAD_FILE")) {
+                    recreateWalletAndStart()
+                } else {
+                    throw e
+                }
+            }
+            return true
+        } catch (e: Exception) {
+            // core.start() publishes StartError itself before rethrowing; setting it
+            // here as well covers exceptions thrown by the recreate path.
+            core.setStartError(e.message ?: e.javaClass.simpleName)
+            return false
+        }
+    }
+
+    private fun recreateWalletAndStart() {
+        File(core.walletDirPath()).deleteRecursively()
+        storage.clearAll()
+        core.start()
+    }
+
+    private fun stopCore() {
+        runCatching { core.stop() }
     }
 
     fun store() { lifecycleScope.launch { runCatching { core.store() } } }
