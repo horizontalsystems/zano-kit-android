@@ -22,6 +22,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         daemonAddress = WalletConfig.DAEMON_ADDRESS,
     )
 
+    val libVersion: String = ZanoNative.getVersion() ?: "unknown"
+
     val syncStateFlow: StateFlow<SyncState> = kit.syncStateFlow
     val balancesFlow: StateFlow<List<BalanceInfo>> = kit.balancesFlow
     val assetsFlow: StateFlow<List<AssetInfo>> = kit.assetsFlow

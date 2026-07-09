@@ -62,37 +62,40 @@ These steps produce the `.a` files in `zanokit/external-libs/`. Run them wheneve
 git clone --recursive https://github.com/hyle-team/zano_native_lib ~/zano_native_lib
 cd ~/zano_native_lib
 
-# Boost-for-Android submodule uses SSH — clone manually if it failed above:
-git clone https://github.com/moritz-wundke/Boost-for-Android.git thirdparty/boost-android
-
-# Zano requires tor headers even when TOR is disabled:
+# Pin the Zano source to the release the current external-libs were built from
+# (Zano 2.2.1.502 — the zano_native_lib pin may lag behind the release tag):
 cd Zano
-git submodule update --init contrib/tor-connect
+git fetch --tags
+git checkout 2.2.1.502   # commit 76a791cc5c70f973661f07582e135fede488a66c
+git submodule update --init contrib/miniupnp contrib/jwt-cpp contrib/bitcoin-secp256k1
 cd ..
 ```
 
-### Step 2 — Build OpenSSL 3.1.8
+(The `contrib/tor-connect` submodule was removed upstream in 2.2.x; `bitcoin-secp256k1` and `jwt-cpp` are new.)
+
+### Step 2 — Provide OpenSSL 3.1.8 and Boost 1.84.0 prebuilts
+
+The repo ships prebuilt Boost/OpenSSL in `_libs_android/{boost,openssl}/{ABI}/` as **Git LFS pointers**. If `git-lfs` is installed, fetch them with:
 
 ```bash
-cd ~/zano_native_lib
+git lfs pull --include="_libs_android/**"
+```
+
+Without LFS, build them locally with the thirdparty scripts and place the resulting `.a` files into the same layout (`_libs_android/boost/{ABI}/lib/`, `_libs_android/openssl/{ABI}/lib/`; Boost headers go to `_libs_android/boost/include/`):
+
+```bash
 export ANDROID_NDK_ROOT=$HOME/Library/Android/sdk/ndk/27.0.12077973
-./thirdparty/build-openssl-android.sh
+./thirdparty/openssl/android/build-all.sh
+./thirdparty/boost/android/build.sh
 ```
 
-Output: `_libs_android/openssl/{arm64-v8a,armeabi-v7a,x86,x86_64}/lib/{libssl,libcrypto}.a`
+The `VERSION` files in each `{ABI}` directory (`1.84.0` / `3.1.8`) are plain text shipped with the repo — `build/android/build.sh` reads them and fails if missing.
 
-### Step 3 — Build Boost 1.84.0
+Boost libraries: atomic, chrono, date_time, filesystem, program_options, regex, serialization, system, thread, timer, wserialization.
 
-```bash
-cd ~/zano_native_lib
-./thirdparty/build-boost-android.sh
-```
+**libbacktrace** (`_libs_android/libbacktrace/`) is a new optional Boost.Stacktrace backend. Our build has it disabled (directory renamed to `libbacktrace.disabled`) so Zano falls back to the basic backend — the LFS pointer files would otherwise be picked up as real archives and break the link. If enabling it, `libbacktrace.a` must also be linked into `libzanokit.so`.
 
-Output: `_libs_android/boost/{arm64-v8a,armeabi-v7a,x86,x86_64}/lib/libboost_*.a` and `_libs_android/boost/include/`
-
-Boost libraries built: atomic, chrono, date_time, filesystem, program_options, regex, serialization, system, thread, timer, wserialization.
-
-### Step 4 — Apply patches to the Zano source
+### Step 3 — Apply patches to the Zano source
 
 ```bash
 cd ~/zano_native_lib/Zano
@@ -101,27 +104,29 @@ git am ~/StudioProjects/zano-kit-android/patches/0001-Add-generate_address-and-g
 
 See [Patches](#patches) below for what this changes.
 
-### Step 5 — Build the Zano libraries
+### Step 4 — Build the Zano libraries
 
 ```bash
 cd ~/zano_native_lib
 export PATH="$HOME/Library/Android/sdk/cmake/3.22.1/bin:$PATH"
 export ANDROID_NDK_ROOT=$HOME/Library/Android/sdk/ndk/27.0.12077973
-./build_android_libs.sh
+./build/android/build.sh arm64-v8a
+./build/android/build.sh armeabi-v7a
+./build/android/build.sh x86_64
 ```
 
-`build_android_libs.sh` iterates over all four ABIs (`armeabi-v7a`, `x86`, `arm64-v8a`, `x86_64`) and runs CMake for each with these flags:
+(`./build/android/build-all.sh` builds all four ABIs including `x86`, which the kit doesn't ship.) The script runs CMake with:
 ```
 -DCMAKE_SYSTEM_NAME=Android
--DCMAKE_SYSTEM_VERSION=23
+-DCMAKE_SYSTEM_VERSION=26          (default; override with ANDROID_TARGET env var)
 -DCMAKE_ANDROID_STL_TYPE=c++_static
 -DDISABLE_TOR=TRUE
--DCMAKE_C_FLAGS=-mno-unaligned-access   (armeabi-v7a only)
+-mno-unaligned-access              (armeabi-v7a only)
 ```
 
-Output: `_install_android/{ABI}/lib/{libwallet,libcurrency_core,libcommon,libcrypto,libz}.a`
+Output: `_install_android/{ABI}/lib/{libwallet,libcurrency_core,libcommon,libcrypto,libz}.a` and shared headers in `_install_android/include/`.
 
-### Step 6 — Copy libraries and headers into the project
+### Step 5 — Copy libraries and headers into the project
 
 ```bash
 for ABI in arm64-v8a armeabi-v7a x86_64; do
@@ -143,37 +148,48 @@ for ABI in arm64-v8a armeabi-v7a x86_64; do
   cp ~/zano_native_lib/_libs_android/openssl/$ABI/lib/libcrypto.a $DEST/
 done
 
-# Headers (architecture-independent — copy from any ABI)
-cp ~/zano_native_lib/_install_android/arm64-v8a/include/* \
+# Headers — the kit only needs these two from the install (now architecture-shared):
+cp ~/zano_native_lib/_install_android/include/plain_wallet_api.h \
+   ~/zano_native_lib/_install_android/include/plain_wallet_api_defs.h \
    ~/StudioProjects/zano-kit-android/zanokit/external-libs/include/
 ```
 
-The `external-libs/include/` directory also contains `wallet2_api_c.h` and `plain_wallet_api.h`. These are the patched versions that declare `generate_address`, `generate_address_from_derivation`, and `get_timestamp_from_word`. Do not overwrite them with unpatched headers from the Zano install.
+`external-libs/include/wallet2_api_c.h` and `zano_checksum.h` are our own files — never overwrite them. `plain_wallet_api.h` may only be copied from a **patched** source tree: the patch adds the `deinit`, `get_timestamp_from_word`, `generate_address`, and `generate_address_from_derivation` declarations the kit's C wrapper requires.
 
 ---
 
 ## Patches
 
-All patches are in `patches/` and must be applied to the Zano source (Step 4) before building.
+All patches are in `patches/` and must be applied to the Zano source (Step 3) before building. The patch is regenerated against each new Zano release (`git format-patch -1` after committing the changes onto the release tag).
 
 ### `0001-Add-generate_address-and-generate_address_from_deriv.patch`
 
-These three functions exist in `plain_wallet_api.h` (the external-libs header) but were not in the upstream `hyle-team/zano` source. The patch adds them.
+The kit's C wrapper (`wallet2_api_c.cpp`) needs four functions that Zano 2.2.x does not expose in the public `plain_wallet_api.h`:
+- `generate_address` / `generate_address_from_derivation` — never existed upstream; the patch adds declaration + implementation.
+- `get_timestamp_from_word` — existed in the plain_wallet API in 2.1.x, **removed upstream in 2.2.x**; the patch re-adds declaration + implementation (delegating to `currency::get_timestamp_from_word`, which still exists in `currency_format_utils`).
+- `deinit` — implementation still exists in 2.2.x (used internally by the static-destroy handler) but its public declaration was removed; the patch re-adds only the declaration.
+
+**Why the kit must keep calling `deinit()`** (in `ZanoWalletApi.closeWallet()`), even though upstream made it internal:
+- `plain_wallet::init()` refuses to run when the global instance exists (`API_RETURN_CODE_ALREADY_EXISTS`). Without `deinit()` between kit stop and start, the next `init2()` is a silent no-op — the new daemon address and working dir are ignored, breaking wallet/node switching.
+- `deinit()` (`quick_stop_no_save()`) is the only thing that stops the wallets_manager sync threads on Android. Upstream's replacement — a handler that runs during static object destruction — never fires on Android, because processes are killed, not exited; without our call the engine keeps polling the daemon after `stop()`.
+- `closeWallet()` (which saves the wallet file) must run before `deinit()`, and both under `nativeLock`.
+- Since `deinit` is now unofficial API, **re-check it on every Zano version bump** — if upstream deletes or repurposes it, move its body (release global instance + `quick_stop_no_save()`) into this patch as our own exported function.
 
 **`src/currency_core/account.h`**
 - Moves `void set_null()` from `private:` to `public:`. Required so the new `plain_wallet` functions can zero out the account object after extracting the address.
 
 **`src/wallet/plain_wallet_api.h`**
-- Declares three new functions in the `plain_wallet` namespace:
+- Re-declares `void deinit();`
+- Declares the three other functions in the `plain_wallet` namespace:
   - `uint64_t get_timestamp_from_word(const std::string& word, bool& password_used)` — decodes the creation timestamp from a legacy seed word
   - `std::string generate_address(const std::string& seed, const std::string& seed_password)` — derives the wallet address from a 25-word legacy seed without opening a full wallet
   - `std::string generate_address_from_derivation(const std::string& secret_derivation_hex, bool is_auditable)` — derives the wallet address from a BIP39 secret derivation hex without opening a full wallet
 
 **`src/wallet/plain_wallet_api.cpp`**
-- Implements the three functions declared above.
+- Implements `get_timestamp_from_word`, `generate_address`, and `generate_address_from_derivation`.
 - `generate_address`: constructs a `currency::account_base`, calls `restore_from_seed_phrase`, extracts the address string, then zeroes the account with `set_null()`.
 - `generate_address_from_derivation`: hex-decodes the derivation key with `epee::string_tools::parse_hexstr_to_binbuff`, calls `restore_from_secret_derivation`, extracts the address, then zeroes the account.
-- `get_timestamp_from_word`: delegates to `currency::get_timestamp_from_word` (already in `currency_format_utils`).
+- `get_timestamp_from_word`: delegates to `currency::get_timestamp_from_word`.
 
 ---
 
@@ -310,6 +326,7 @@ filesDir/ZanoKit/{walletId}/network_{0|1}/
 
 | | |
 |-|-|
+| Zano source version | 2.2.1.502 (`76a791cc`) + `patches/0001` |
 | Native asset ID | `d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a` |
 | Decimal places | 12 |
 | Block time | ~60 seconds |
