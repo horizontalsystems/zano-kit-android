@@ -27,6 +27,7 @@ fun BalanceScreen(vm: MainViewModel) {
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("Balances", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Zano lib ${vm.libVersion}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
         Spacer(Modifier.height(8.dp))
 
         SyncStateCard(syncState)

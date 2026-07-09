@@ -10,9 +10,9 @@
 namespace plain_wallet
 {
   typedef int64_t hwallet;
-  void deinit();
   std::string init(const std::string& address, const std::string& working_dir, int log_level);
   std::string init(const std::string& ip, const std::string& port, const std::string& working_dir, int log_level);
+  void deinit();
   std::string reset();
   std::string set_log_level(int log_level);
   std::string get_version();
@@ -49,8 +49,8 @@ namespace plain_wallet
   std::string reset_wallet_password(hwallet h, const std::string& password);
   uint64_t get_current_tx_fee(uint64_t priority); // 0 (default), 1 (unimportant), 2 (normal), 3 (elevated), 4 (priority)
   uint64_t get_timestamp_from_word(const std::string& word, bool& password_used);
-  std::string generate_address(const std::string& seed, const std::string& seed_password);
   std::string generate_address_from_derivation(const std::string& secret_derivation_hex, bool is_auditable);
+  std::string generate_address(const std::string& seed, const std::string& seed_password);
 
   //callback-mode for async calls
   typedef void (*callback_type)(uint64_t job_id, const std::string& job_response);
