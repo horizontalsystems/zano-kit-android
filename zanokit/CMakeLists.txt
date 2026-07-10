@@ -11,6 +11,14 @@ add_library(zanokit SHARED
     src/main/cpp/helpers.cpp
 )
 
+# Reproducible builds: strip the build-id and map checkout/build paths out of
+# __FILE__ strings so the output does not depend on the build directory.
+target_link_options(zanokit PRIVATE "-Wl,--build-id=none")
+target_compile_options(zanokit PRIVATE
+    "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
+    "-ffile-prefix-map=${CMAKE_BINARY_DIR}=."
+)
+
 set(EXTERNAL_LIBS_DIR ${CMAKE_SOURCE_DIR}/external-libs)
 message(STATUS "EXTERNAL_LIBS_DIR = ${EXTERNAL_LIBS_DIR}")
 
