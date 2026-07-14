@@ -2,6 +2,7 @@ plugins {
     id 'com.android.library'
     id 'org.jetbrains.kotlin.android'
     alias(libs.plugins.kotlin.ksp)
+    id 'maven-publish'
 }
 
 android {
@@ -55,6 +56,26 @@ android {
     }
     kotlinOptions {
         jvmTarget = '11'
+    }
+
+    publishing {
+        singleVariant('release')
+    }
+}
+
+// Local testing: ./gradlew :zanokit:publishToMavenLocal, then set
+// zanoKit = "local" in the consuming app (with mavenLocal() in repositories).
+// Coordinates match the JitPack artifact so only the version changes.
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+                groupId = 'com.github.horizontalsystems'
+                artifactId = 'zano-kit-android'
+                version = 'local-4'
+            }
+        }
     }
 }
 
