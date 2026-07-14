@@ -34,10 +34,12 @@ class ZanoWalletApi(private val walletId: Long) {
         return (0 until arr.length()).map { arr.getJSONObject(it) }
     }
 
-    // Returns list of transfer entries from get_recent_txs_and_info
+    // Returns list of transfer entries from get_recent_txs_and_info3.
+    // The v1 call is legacy: its entries carry only the native-coin amount/is_income
+    // and no per-asset subtransfers, so confidential asset transfers are invisible.
     fun getRecentTransactions(offset: Int = 0, count: Int = 1000): List<JSONObject> {
         val params = mapOf("offset" to offset, "count" to count, "update_provision_info" to true)
-        val result = invoke("get_recent_txs_and_info", params) ?: return emptyList()
+        val result = invoke("get_recent_txs_and_info3", params) ?: return emptyList()
         val arr = result.optJSONArray("transfers") ?: return emptyList()
         return (0 until arr.length()).map { arr.getJSONObject(it) }
     }

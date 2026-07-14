@@ -276,7 +276,6 @@ class ZanoCore(
 
         for (tx in transfers) {
             val txHash = tx.optString("tx_hash")
-            val isIncome = tx.optBoolean("is_income", false)
             val fee = tx.optLong("fee", 0)
             val height = tx.optLong("height", 0)
             val timestamp = tx.optLong("timestamp", 0)
@@ -286,12 +285,25 @@ class ZanoCore(
             var remoteAddress: String? = if (remoteArr != null && remoteArr.length() > 0) remoteArr.getString(0) else null
             if (remoteAddress == null) remoteAddress = sentMap[txHash]?.address
 
-            var recordsCreated = 0
-            val subtransfers = tx.optJSONArray("subtransfers")
+            // get_recent_txs_and_info3 nests subtransfers in groups keyed by payment id
+            val subtransfers = mutableListOf<JSONObject>()
+            tx.optJSONArray("subtransfers_by_pid")?.let { groups ->
+                for (g in 0 until groups.length()) {
+                    val arr = groups.getJSONObject(g).optJSONArray("subtransfers") ?: continue
+                    for (i in 0 until arr.length()) subtransfers.add(arr.getJSONObject(i))
+                }
+            }
 
-            if (subtransfers != null && subtransfers.length() > 0) {
-                for (i in 0 until subtransfers.length()) {
-                    val sub = subtransfers.getJSONObject(i)
+            // v3 has no top-level is_income; mirror the legacy semantic (native subtransfer's flag)
+            val isIncome = subtransfers
+                .firstOrNull { it.optString("asset_id").ifEmpty { ZANO_ASSET_ID } == ZANO_ASSET_ID }
+                ?.optBoolean("is_income", false)
+                ?: tx.optBoolean("is_income", false)
+
+            var recordsCreated = 0
+
+            if (subtransfers.isNotEmpty()) {
+                for (sub in subtransfers) {
                     val assetId = sub.optString("asset_id").ifEmpty { ZANO_ASSET_ID }
                     val amount = sub.optLong("amount", 0)
                     val subIsIncome = sub.optBoolean("is_income", isIncome)

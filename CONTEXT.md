@@ -264,12 +264,16 @@ All `ZanoNative.*` calls return JSON strings. Format:
 
 `ZanoNative.invoke(walletId, jsonRequest)` is the main method for wallet operations:
 - `getbalance` → `balances[].{asset_info, total, unlocked, awaiting_in, awaiting_out}`
-- `get_recent_txs_and_info` → `transfers[].{tx_hash, subtransfers[], employed_entries, ...}`
+- `get_recent_txs_and_info3` → `transfers[].{tx_hash, subtransfers_by_pid[].subtransfers[], employed_entries, ...}`
+  (must be the v3 call: the legacy v1 returns only native-coin `amount`/`is_income` per entry and **no
+  per-asset subtransfers**, which makes confidential-asset transactions invisible; v3 entries also have
+  no top-level `amount`/`is_income` — the kit derives `is_income` from the native subtransfer)
 - `transfer` → `{tx_hash}` — throws `InsufficientFundsException` or `SendFailedException` on error
 
 ### Transaction Logic
 
-Zano transactions have a `subtransfers[]` array — one entry per asset involved:
+Zano transactions have subtransfer entries — one per asset involved (v3 nests them under
+`subtransfers_by_pid[]` grouped by payment id; the kit flattens the groups):
 1. Skip the fee subtransfer: outgoing ZANO entry where `amount == fee`
 2. Outgoing native ZANO: displayed amount is `amount - fee` (net of fee)
 3. All other subtransfers: displayed amount is `amount` as-is
