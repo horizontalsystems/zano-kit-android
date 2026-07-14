@@ -18,6 +18,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 class ZanoCore(
     private val context: Context,
@@ -26,6 +27,7 @@ class ZanoCore(
     val daemonAddress: String,
     val networkType: NetworkType,
     private val storage: ZanoStorage,
+    private val pinnedAssetIds: List<String> = emptyList(),
 ) {
     // Recreated on every start so the kit can be stopped and started again.
     // The handler keeps uncaught exceptions in background polls from crashing
@@ -56,6 +58,28 @@ class ZanoCore(
 
     private val _transactionsFlow = MutableStateFlow<List<TransactionInfo>>(emptyList())
     val transactionsFlow: StateFlow<List<TransactionInfo>> = _transactionsFlow
+
+    // Asset ids not yet confirmed in the wallet's local whitelist this session.
+    // assets_whitelist_add resolves the descriptor from the daemon, so attempts
+    // only make sense once the connection is up; failed ids are retried on later
+    // sync-state emissions. Successful adds persist in the wallet file.
+    private val pendingPinAssetIds = mutableSetOf<String>()
+    private val pinInProgress = AtomicBoolean(false)
+
+    private fun pinAssetsToWhitelist() {
+        if (pendingPinAssetIds.isEmpty() || !pinInProgress.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                val snapshot = synchronized(pendingPinAssetIds) { pendingPinAssetIds.toList() }
+                for (assetId in snapshot) {
+                    val added = runCatching { api.addAssetToWhitelist(assetId) }.getOrDefault(false)
+                    if (added) synchronized(pendingPinAssetIds) { pendingPinAssetIds.remove(assetId) }
+                }
+            } finally {
+                pinInProgress.set(false)
+            }
+        }
+    }
 
     fun start() {
         try {
@@ -134,6 +158,11 @@ class ZanoCore(
         _assetsFlow.value = storage.getAllAssets()
         _transactionsFlow.value = storage.getTransactions()
 
+        synchronized(pendingPinAssetIds) {
+            pendingPinAssetIds.clear()
+            pendingPinAssetIds.addAll(pinnedAssetIds)
+        }
+
         syncManager = SyncStateManager(api, _restoreHeight)
         syncManager.onSyncedPoll = { refresh() }
         syncManager.onBlockHeightsChanged = { wh, dh -> storage.saveBlockHeights(wh, dh) }
@@ -161,13 +190,17 @@ class ZanoCore(
                 _syncStateFlow.value = newState
                 when (newState) {
                     is SyncState.Synced -> {
+                        pinAssetsToWhitelist()
                         runCatching { api.store() }
                     }
 
-                    is SyncState.Syncing -> if (syncManager.chunkOfBlocksSynced) {
-                        refresh()
-                        runCatching { api.store() }
-                        syncManager.walletStored()
+                    is SyncState.Syncing -> {
+                        pinAssetsToWhitelist()
+                        if (syncManager.chunkOfBlocksSynced) {
+                            refresh()
+                            runCatching { api.store() }
+                            syncManager.walletStored()
+                        }
                     }
 
                     else -> Unit

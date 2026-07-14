@@ -84,6 +84,13 @@ class ZanoWalletApi(private val walletId: Long) {
         invoke("store")
     }
 
+    // Adds the asset to the wallet's local whitelist (m_custom_assets). The wallet
+    // resolves the descriptor from the connected daemon and persists it in the
+    // wallet file, so once added the asset is tracked without depending on the
+    // global whitelist fetch from api.zano.org. Requires a live daemon connection.
+    fun addAssetToWhitelist(assetId: String): Boolean =
+        invoke("assets_whitelist_add", mapOf("asset_id" to assetId)) != null
+
     companion object {
         // Serializes every engine-touching native call process-wide: the native
         // engine is a global singleton and closeWallet/deinit must never overlap
