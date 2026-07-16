@@ -95,14 +95,20 @@ Boost libraries: atomic, chrono, date_time, filesystem, program_options, regex, 
 
 **libbacktrace** (`_libs_android/libbacktrace/`) is a new optional Boost.Stacktrace backend. Our build has it disabled (directory renamed to `libbacktrace.disabled`) so Zano falls back to the basic backend — the LFS pointer files would otherwise be picked up as real archives and break the link. If enabling it, `libbacktrace.a` must also be linked into `libzanokit.so`.
 
-### Step 3 — Apply patches to the Zano source
+### Step 3 — Apply patches
 
 ```bash
+# Zano source patches:
 cd ~/zano_native_lib/Zano
 git am ~/StudioProjects/zano-kit-android/patches/0001-Add-generate_address-and-generate_address_from_deriv.patch
+git am ~/StudioProjects/zano-kit-android/patches/0002-Increase-plain_wallet-RPC-timeout-to-20s-with-3-atte.patch
+
+# Build-system patch (applies to zano_native_lib itself, not the Zano submodule):
+cd ~/zano_native_lib
+git apply ~/StudioProjects/zano-kit-android/patches/0003-zano_native_lib-android-build-file-prefix-map.patch
 ```
 
-See [Patches](#patches) below for what this changes.
+See [Patches](#patches) below for what these change.
 
 ### Step 4 — Build the Zano libraries
 
@@ -160,7 +166,7 @@ cp ~/zano_native_lib/_install_android/include/plain_wallet_api.h \
 
 ## Patches
 
-All patches are in `patches/` and must be applied to the Zano source (Step 3) before building. The patch is regenerated against each new Zano release (`git format-patch -1` after committing the changes onto the release tag).
+All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
 
 ### `0001-Add-generate_address-and-generate_address_from_deriv.patch`
 
@@ -190,6 +196,21 @@ The kit's C wrapper (`wallet2_api_c.cpp`) needs four functions that Zano 2.2.x d
 - `generate_address`: constructs a `currency::account_base`, calls `restore_from_seed_phrase`, extracts the address string, then zeroes the account with `set_null()`.
 - `generate_address_from_derivation`: hex-decodes the derivation key with `epee::string_tools::parse_hexstr_to_binbuff`, calls `restore_from_secret_derivation`, extracts the address, then zeroes the account.
 - `get_timestamp_from_word`: delegates to `currency::get_timestamp_from_word`.
+
+### `0002-Increase-plain_wallet-RPC-timeout-to-20s-with-3-atte.patch`
+
+Fixes two send-time problems observed in production (Zano 2.2.1.502 update):
+
+**`src/wallet/wallets_manager.cpp`**
+- `HTTP_PROXY_TIMEOUT` 4000 → 20000, `HTTP_PROXY_ATTEMPTS_COUNT` 1 → 3. The `plain_wallet` engine configures every daemon RPC with these values; 4s/1-attempt made the send-time decoy fetch (`getrandom_outs4.bin`) fail with `no connection to daemon` on slow mobile networks. Retries are per-RPC, before signing/broadcast — no double-send risk.
+
+**`src/wallet/wallet_rpc_server.cpp`**
+- The `not_enough_money` catch handler reports `e.to_string()` instead of `e.what()` (empty for this type), so errors include `available: X, required: Y = amount + fee` — enough to tell unsynced wallet, locked change, and fee shortfall apart remotely.
+
+### `0003-zano_native_lib-android-build-file-prefix-map.patch`
+
+**`build/android/build.sh`** (in `zano_native_lib`, not the Zano submodule)
+- Adds `-ffile-prefix-map=${PROJECT_ROOT}=.` to the compile flags so the builder's absolute filesystem paths don't leak into `__FILE__` strings (and thus wallet error messages) in the shipped binaries. Verify after building: `strings libwallet.a | grep -c "$HOME"` → 0.
 
 ---
 
@@ -268,7 +289,7 @@ All `ZanoNative.*` calls return JSON strings. Format:
   (must be the v3 call: the legacy v1 returns only native-coin `amount`/`is_income` per entry and **no
   per-asset subtransfers**, which makes confidential-asset transactions invisible; v3 entries also have
   no top-level `amount`/`is_income` — the kit derives `is_income` from the native subtransfer)
-- `transfer` → `{tx_hash}` — throws `InsufficientFundsException` or `SendFailedException` on error
+- `transfer` → `{tx_hash}` — on error throws `InsufficientFundsException`, `NodeUnreachableException` (daemon RPC failed/timed out mid-send, before broadcast — retryable), or `SendFailedException`
 
 ### Transaction Logic
 
@@ -330,7 +351,7 @@ filesDir/ZanoKit/{walletId}/network_{0|1}/
 
 | | |
 |-|-|
-| Zano source version | 2.2.1.502 (`76a791cc`) + `patches/0001` |
+| Zano source version | 2.2.1.502 (`76a791cc`) + `patches/0001`–`0002`; built with `patches/0003` |
 | Native asset ID | `d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a` |
 | Decimal places | 12 |
 | Block time | ~60 seconds |
@@ -356,4 +377,4 @@ app/src/main/java/io/horizontalsystems/zanokit/sample/
     └── SendScreen.kt         address/amount/memo form, result feedback
 ```
 
-`WalletConfig.DAEMON_ADDRESS = "37.27.98.156:11211"` — public Zano mainnet node.
+`WalletConfig.DAEMON_ADDRESS = "https://zano.unstoppable.money:443"` — public Zano mainnet node.

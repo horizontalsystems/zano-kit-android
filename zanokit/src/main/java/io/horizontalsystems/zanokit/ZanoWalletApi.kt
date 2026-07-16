@@ -191,6 +191,8 @@ class ZanoWalletApi(private val walletId: Long) {
         if (message != null) {
             val insufficientFundsPattern = Regex("NOT_ENOUGH_MONEY|not enough money|insufficient", RegexOption.IGNORE_CASE)
             if (insufficientFundsPattern.containsMatchIn(message)) return InsufficientFundsException(message)
+            val nodeUnreachablePattern = Regex("no connection to daemon|DAEMON_IS_BUSY", RegexOption.IGNORE_CASE)
+            if (nodeUnreachablePattern.containsMatchIn(message)) return NodeUnreachableException(message)
         }
         return SendFailedException(message)
     }
@@ -198,4 +200,6 @@ class ZanoWalletApi(private val walletId: Long) {
 
 open class ZanoException(message: String?) : Exception(message)
 class InsufficientFundsException(message: String?) : ZanoException(message)
+// The node RPC failed or timed out mid-send (before broadcast) — retryable.
+class NodeUnreachableException(message: String?) : ZanoException(message)
 class SendFailedException(message: String?) : ZanoException(message)

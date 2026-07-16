@@ -1,0 +1,16 @@
+diff --git a/build/android/build.sh b/build/android/build.sh
+index c818d624..e7542f77 100755
+--- a/build/android/build.sh
++++ b/build/android/build.sh
+@@ -24,6 +24,11 @@ echo "Building android $ARCH in '${BUILD_ROOT}'..."
+ CMAKE_C_FLAGS=("${C_FLAGS}")
+ CMAKE_CXX_FLAGS=("${CXX_FLAGS}")
+ 
++# Reproducible builds: keep the checkout path out of __FILE__ strings so the
++# built libraries (and the error messages they produce) don't leak it.
++CMAKE_C_FLAGS+=("-ffile-prefix-map=${PROJECT_ROOT}=.")
++CMAKE_CXX_FLAGS+=("-ffile-prefix-map=${PROJECT_ROOT}=.")
++
+ CMAKE_CXX_FLAGS+=("-Wno-deprecated-declarations")
+ CMAKE_CXX_FLAGS+=("-Wno-deprecated-copy")
+ CMAKE_CXX_FLAGS+=("-Wno-deprecated-copy-with-user-provided-copy")

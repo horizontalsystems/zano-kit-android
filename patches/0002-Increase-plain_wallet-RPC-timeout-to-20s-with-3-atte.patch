@@ -1,0 +1,42 @@
+From 9175f0daa8fbd946a1b5954ee96ca4a4fd260b48 Mon Sep 17 00:00:00 2001
+From: chyngyz <chyngyz.omurov@gmail.com>
+Date: Thu, 16 Jul 2026 16:21:42 +0600
+Subject: [PATCH] Increase plain_wallet RPC timeout to 20s with 3 attempts,
+ report amounts in not_enough_money errors
+
+---
+ src/wallet/wallet_rpc_server.cpp | 2 +-
+ src/wallet/wallets_manager.cpp   | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/wallet/wallet_rpc_server.cpp b/src/wallet/wallet_rpc_server.cpp
+index 5c7a787f..0d6c84c7 100644
+--- a/src/wallet/wallet_rpc_server.cpp
++++ b/src/wallet/wallet_rpc_server.cpp
+@@ -58,7 +58,7 @@ POP_VS_WARNINGS
+         catch (const tools::error::not_enough_money& e) \
+         { \
+           er.code = WALLET_RPC_ERROR_CODE_NOT_ENOUGH_MONEY; \
+-          er.message = std::string("WALLET_RPC_ERROR_CODE_NOT_ENOUGH_MONEY: ") + e.what(); \
++          er.message = std::string("WALLET_RPC_ERROR_CODE_NOT_ENOUGH_MONEY: ") + e.to_string(); \
+           return false; \
+         } \
+         catch (const tools::error::wallet_error& e) \
+diff --git a/src/wallet/wallets_manager.cpp b/src/wallet/wallets_manager.cpp
+index 02f47730..7ec24143 100644
+--- a/src/wallet/wallets_manager.cpp
++++ b/src/wallet/wallets_manager.cpp
+@@ -42,8 +42,8 @@
+   auto& name = it->second;
+ 
+ 
+-#define HTTP_PROXY_TIMEOUT                4000
+-#define HTTP_PROXY_ATTEMPTS_COUNT         1
++#define HTTP_PROXY_TIMEOUT                20000
++#define HTTP_PROXY_ATTEMPTS_COUNT         3
+ 
+ const command_line::arg_descriptor<bool> arg_alloc_win_console  ( "alloc-win-console", "Allocates debug console with GUI", false );
+ const command_line::arg_descriptor<std::string> arg_html_folder  ( "html-path", "Manually set GUI html folder path");
+-- 
+2.50.1 (Apple Git-155)
+
