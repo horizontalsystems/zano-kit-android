@@ -1,3 +1,13 @@
+From f36e606917edb910195a2d6f843919096f13ea1f Mon Sep 17 00:00:00 2001
+From: chyngyz <chyngyz.omurov@gmail.com>
+Date: Mon, 27 Jul 2026 17:53:23 +0600
+Subject: [PATCH] PATCH:0003 Strip checkout paths from Android builds with
+ -ffile-prefix-map
+
+---
+ build/android/build.sh | 5 +++++
+ 1 file changed, 5 insertions(+)
+
 diff --git a/build/android/build.sh b/build/android/build.sh
 index c818d624..e7542f77 100755
 --- a/build/android/build.sh
@@ -14,3 +24,6 @@ index c818d624..e7542f77 100755
  CMAKE_CXX_FLAGS+=("-Wno-deprecated-declarations")
  CMAKE_CXX_FLAGS+=("-Wno-deprecated-copy")
  CMAKE_CXX_FLAGS+=("-Wno-deprecated-copy-with-user-provided-copy")
+-- 
+2.50.1 (Apple Git-155)
+

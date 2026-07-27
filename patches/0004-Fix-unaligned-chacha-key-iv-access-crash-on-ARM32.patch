@@ -1,0 +1,64 @@
+From 6a33a062a088a56a33383e46f50deb0101a91704 Mon Sep 17 00:00:00 2001
+From: chyngyz <chyngyz.omurov@gmail.com>
+Date: Mon, 27 Jul 2026 12:00:00 +0600
+Subject: [PATCH] PATCH:0004 Fix unaligned chacha iv/key access crash on ARM32
+
+chacha.c loaded/stored words by casting byte pointers to uint32_t*.
+wallet2::load_keys passes kf_data.iv, which lives at offset 1 inside
+keys_file_data (uint8_t version precedes the packed chacha_iv), so the
+pointer is always misaligned. The alignment-assuming cast lets the
+compiler emit LDM/LDRD on armeabi-v7a, which fault unconditionally on
+unaligned addresses regardless of SCTLR.A - crashing every wallet
+open/save on 32-bit ARM devices (SIGBUS in chacha8 / chacha_with_counter).
+
+Replace the casts with memcpy-based helpers. memcpy compiles to the same
+single load/store on platforms that permit unaligned access (arm64, x86)
+and to safe byte accesses on strict-alignment targets, so there is no
+performance change on 64-bit.
+---
+ src/crypto/chacha.c | 28 ++++++++++++++++++++++++----
+ 1 file changed, 24 insertions(+), 4 deletions(-)
+
+diff --git a/src/crypto/chacha.c b/src/crypto/chacha.c
+index b711bf14..6b2478ed 100644
+--- a/src/crypto/chacha.c
++++ b/src/crypto/chacha.c
+@@ -19,11 +19,31 @@ Public domain.
+ #define U32V(v) ((uint32_t)(v) & UINT32_C(0xFFFFFFFF))
+ 
+ /*
+- * The following macros load words from an array of bytes with
+- * different types of endianness, and vice versa.
++ * The following functions load/store words from an array of bytes with
++ * little-endian ordering.
++ *
++ * They must not cast the byte pointer to uint32_t*: callers routinely pass
++ * unaligned pointers (e.g. chacha_iv sits at offset 1 inside the packed
++ * wallet keys_file_data struct), and the cast lets the compiler emit
++ * alignment-assuming instructions (LDM/LDRD on ARM32) that fault on
++ * unaligned addresses. memcpy compiles to a single load/store where
++ * unaligned access is allowed and to safe byte accesses elsewhere.
+  */
+-#define U8TO32_LITTLE(p) SWAP32LE(((uint32_t*)(p))[0])
+-#define U32TO8_LITTLE(p, v) (((uint32_t*)(p))[0] = SWAP32LE(v))
++static inline uint32_t u8to32_little(const void* p)
++{
++  uint32_t v;
++  memcpy(&v, p, sizeof(v));
++  return SWAP32LE(v);
++}
++
++static inline void u32to8_little(void* p, uint32_t v)
++{
++  v = SWAP32LE(v);
++  memcpy(p, &v, sizeof(v));
++}
++
++#define U8TO32_LITTLE(p) u8to32_little(p)
++#define U32TO8_LITTLE(p, v) u32to8_little((p), (v))
+ 
+ #define ROTATE(v,c) (rol32(v,c))
+ #define XOR(v,w) ((v) ^ (w))
+-- 
+2.50.1 (Apple Git-155)
+

@@ -102,10 +102,11 @@ Boost libraries: atomic, chrono, date_time, filesystem, program_options, regex, 
 cd ~/zano_native_lib/Zano
 git am ~/StudioProjects/zano-kit-android/patches/0001-Add-generate_address-and-generate_address_from_deriv.patch
 git am ~/StudioProjects/zano-kit-android/patches/0002-Increase-plain_wallet-RPC-timeout-to-20s-with-3-atte.patch
+git am ~/StudioProjects/zano-kit-android/patches/0004-Fix-unaligned-chacha-key-iv-access-crash-on-ARM32.patch
 
 # Build-system patch (applies to zano_native_lib itself, not the Zano submodule):
 cd ~/zano_native_lib
-git apply ~/StudioProjects/zano-kit-android/patches/0003-zano_native_lib-android-build-file-prefix-map.patch
+git am ~/StudioProjects/zano-kit-android/patches/0003-zano_native_lib-android-build-file-prefix-map.patch
 ```
 
 See [Patches](#patches) below for what these change.
@@ -166,7 +167,7 @@ cp ~/zano_native_lib/_install_android/include/plain_wallet_api.h \
 
 ## Patches
 
-All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
+All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
 
 ### `0001-Add-generate_address-and-generate_address_from_deriv.patch`
 
@@ -206,6 +207,14 @@ Fixes two send-time problems observed in production (Zano 2.2.1.502 update):
 
 **`src/wallet/wallet_rpc_server.cpp`**
 - The `not_enough_money` catch handler reports `e.to_string()` instead of `e.what()` (empty for this type), so errors include `available: X, required: Y = amount + fee` — enough to tell unsynced wallet, locked change, and fee shortfall apart remotely.
+
+### `0004-Fix-unaligned-chacha-key-iv-access-crash-on-ARM32.patch`
+
+**`src/crypto/chacha.c`**
+- Replaces the `U8TO32_LITTLE`/`U32TO8_LITTLE` macros (which cast byte pointers to `uint32_t*`) with `memcpy`-based inline helpers.
+- Why: `wallet2::load_keys`/`store_keys` pass `keys_file_data.iv`, which sits at offset 1 (a `uint8_t version` precedes the `#pragma pack(1)` `chacha_iv`), so the iv pointer is always misaligned. The aligned-pointer cast let the compiler emit `LDM`/`LDRD` on armeabi-v7a — instructions that fault unconditionally on unaligned addresses — crashing every wallet keys-file open/save on 32-bit ARM devices (SIGBUS in `chacha8`, Zano 2.1.x, or `chacha`/`chacha_with_counter`, Zano 2.2.x). arm64/x86 tolerate unaligned plain loads, so only ARM32 crashed.
+- `memcpy` of 4 bytes compiles to the identical single load/store on arm64/x86 and to safe byte accesses on strict-alignment ARM32 — no performance change where it previously worked.
+- Bug exists upstream (any strict-alignment 32-bit build); worth upstreaming to hyle-team/Zano.
 
 ### `0003-zano_native_lib-android-build-file-prefix-map.patch`
 
@@ -351,7 +360,7 @@ filesDir/ZanoKit/{walletId}/network_{0|1}/
 
 | | |
 |-|-|
-| Zano source version | 2.2.1.502 (`76a791cc`) + `patches/0001`–`0002`; built with `patches/0003` |
+| Zano source version | 2.2.1.502 (`76a791cc`) + `patches/0001`–`0002`, `0004`; built with `patches/0003` |
 | Native asset ID | `d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a` |
 | Decimal places | 12 |
 | Block time | ~60 seconds |

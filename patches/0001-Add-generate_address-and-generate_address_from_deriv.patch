@@ -1,8 +1,8 @@
-From edbe4dc350d94361aec1b767992b0b6e026b34db Mon Sep 17 00:00:00 2001
+From 079a7c4a263f7aacd258a0839c09434c055689e0 Mon Sep 17 00:00:00 2001
 From: chyngyz <chyngyz.omurov@gmail.com>
 Date: Thu, 9 Jul 2026 16:46:17 +0600
-Subject: [PATCH] Add generate_address and generate_address_from_derivation
- methods to PlainWallet
+Subject: [PATCH] PATCH:0001 Add generate_address and
+ generate_address_from_derivation methods to PlainWallet
 
 ---
  src/currency_core/account.h     |  3 +--

@@ -1,8 +1,8 @@
-From 9175f0daa8fbd946a1b5954ee96ca4a4fd260b48 Mon Sep 17 00:00:00 2001
+From 8f022c5c65187471ea79bedcbf400df959f23cda Mon Sep 17 00:00:00 2001
 From: chyngyz <chyngyz.omurov@gmail.com>
 Date: Thu, 16 Jul 2026 16:21:42 +0600
-Subject: [PATCH] Increase plain_wallet RPC timeout to 20s with 3 attempts,
- report amounts in not_enough_money errors
+Subject: [PATCH] PATCH:0002 Increase plain_wallet RPC timeout to 20s with 3
+ attempts, report amounts in not_enough_money errors
 
 ---
  src/wallet/wallet_rpc_server.cpp | 2 +-
