@@ -19,7 +19,7 @@ zanokit/src/main/cpp/zano_jni.cpp       ← JNI bridge (Java_io_horizontalsystem
 zanokit/src/main/cpp/wallet2_api_c.cpp  ← C wrapper around plain_wallet:: API
 zanokit/src/main/cpp/helpers.cpp        ← utility functions
     ↓  links against
-zanokit/external-libs/{ABI}/*.a         ← 17 prebuilt static libs per ABI
+zanokit/external-libs/{ABI}/*.a         ← 18 prebuilt static libs per ABI
 ```
 
 `wallet2_api_c.cpp` and `helpers.cpp` wrap the C++ `plain_wallet::` namespace into C-linkage `ZANO_PlainWallet_*` functions that the JNI bridge calls.
@@ -63,10 +63,10 @@ git clone --recursive https://github.com/hyle-team/zano_native_lib ~/zano_native
 cd ~/zano_native_lib
 
 # Pin the Zano source to the release the current external-libs were built from
-# (Zano 2.2.1.502 — the zano_native_lib pin may lag behind the release tag):
+# (Zano 2.2.1.506 — the zano_native_lib pin may lag behind the release tag):
 cd Zano
 git fetch --tags
-git checkout 2.2.1.502   # commit 76a791cc5c70f973661f07582e135fede488a66c
+git checkout 2.2.1.506   # commit b76fa185850a9134ecf207bca74c0815c3d49838
 git submodule update --init contrib/miniupnp contrib/jwt-cpp contrib/bitcoin-secp256k1
 cd ..
 ```
@@ -163,6 +163,30 @@ cp ~/zano_native_lib/_install_android/include/plain_wallet_api.h \
 
 `external-libs/include/wallet2_api_c.h` and `zano_checksum.h` are our own files — never overwrite them. `plain_wallet_api.h` may only be copied from a **patched** source tree: the patch adds the `deinit`, `get_timestamp_from_word`, `generate_address`, and `generate_address_from_derivation` declarations the kit's C wrapper requires.
 
+### Step 6 — Sanity-check the diff
+
+After copying, `git status` on `external-libs/` tells you whether the rebuild did what you expected.
+
+**On a pure Zano version bump, expect exactly two libs to change per ABI: `libwallet.a` and
+`libcurrency_core.a`.** They are the only archives that embed the version string, and that string
+carries the git hash of the patch-stack HEAD (`2.2.1.506[3a18f65]`) — so they change on *every*
+rebuild even when no source did. Everything else is content-addressed in practice: the archives carry
+no timestamps, so unchanged sources compiled with unchanged flags produce byte-identical `.a` files.
+
+Read anything else that changed as a signal, not noise:
+
+| What changed | What it means |
+|---|---|
+| `libcommon.a` | `src/common/` changed upstream — or, more likely, **compile flags/toolchain moved**. A global flag rewrites every object: introducing `patches/0003` alone changed this lib (117 embedded path strings → 0) with no source change at all. |
+| `libzano_crypto.a` | `src/crypto/` changed — e.g. `patches/0004` changed it on `armeabi-v7a` only, since the `memcpy` helpers alter codegen solely on strict-alignment targets. |
+| `libz.a` | zlib moved. It has never changed to date; treat it as suspicious. |
+| Boost / OpenSSL `.a` | the `_libs_android/` prebuilts were refetched or rebuilt — not something a Zano bump should touch. |
+| *only one or two ABIs* of a lib | a genuine ABI-specific codegen difference (normal for crypto/alignment work), **not** a partial copy. |
+
+Corollary: "which libs changed" is a poor proxy for "what code changed". A commit touching only
+`src/crypto/` still shows `libwallet.a` and `libcurrency_core.a` modified on all three ABIs from the
+hash string alone, while the lib holding the actual fix may show up on a single ABI.
+
 ---
 
 ## Patches
@@ -214,19 +238,36 @@ Fixes two send-time problems observed in production (Zano 2.2.1.502 update):
 - Replaces the `U8TO32_LITTLE`/`U32TO8_LITTLE` macros (which cast byte pointers to `uint32_t*`) with `memcpy`-based inline helpers.
 - Why: `wallet2::load_keys`/`store_keys` pass `keys_file_data.iv`, which sits at offset 1 (a `uint8_t version` precedes the `#pragma pack(1)` `chacha_iv`), so the iv pointer is always misaligned. The aligned-pointer cast let the compiler emit `LDM`/`LDRD` on armeabi-v7a — instructions that fault unconditionally on unaligned addresses — crashing every wallet keys-file open/save on 32-bit ARM devices (SIGBUS in `chacha8`, Zano 2.1.x, or `chacha`/`chacha_with_counter`, Zano 2.2.x). arm64/x86 tolerate unaligned plain loads, so only ARM32 crashed.
 - `memcpy` of 4 bytes compiles to the identical single load/store on arm64/x86 and to safe byte accesses on strict-alignment ARM32 — no performance change where it previously worked.
-- Bug exists upstream (any strict-alignment 32-bit build); worth upstreaming to hyle-team/Zano.
+- Bug exists upstream (any strict-alignment 32-bit build). **Upstreamed and merged** as
+  hyle-team/zano PR #727 (commit `63d2d715`), which is on `master`/`develop`/`release`.
+- **Still required at 2.2.1.506.** The 2.2.1.506 release notes list the fix, but the tag
+  (`b76fa185`, cut 2026-08-07) predates the merge — `chacha.c` at that tag still has the
+  pointer-cast macros, and no release tag contains `63d2d715` yet. Keep applying this patch.
+- **Drop it at the next release:** when `git am` of this patch fails with "patch does not apply",
+  that means upstream now carries the fix — delete the patch instead of forcing it. Verify with
+  `grep -c 'u8to32_little' src/crypto/chacha.c` on the checked-out tag (1+ = fix present).
 
 ### `0003-zano_native_lib-android-build-file-prefix-map.patch`
 
 **`build/android/build.sh`** (in `zano_native_lib`, not the Zano submodule)
-- Adds `-ffile-prefix-map=${PROJECT_ROOT}=.` to the compile flags so the builder's absolute filesystem paths don't leak into `__FILE__` strings (and thus wallet error messages) in the shipped binaries. Verify after building: `strings libwallet.a | grep -c "$HOME"` → 0.
+- Adds `-ffile-prefix-map=${PROJECT_ROOT}=.` to the compile flags so the builder's absolute filesystem paths don't leak into `__FILE__` strings (and thus wallet error messages) in the shipped binaries.
+- Verify on the Zano libs after building: `strings libwallet.a | grep -c "$HOME"` → 0. Note the Boost
+  prebuilts in `_libs_android/` are built without the flag and do retain paths (2–70 strings each);
+  these do not survive into the stripped `.so`.
+- The authoritative check is the shipped AAR, not the build tree — `zanokit/build/intermediates/`
+  keeps stale debug `.so`s from earlier builds that still contain old absolute paths and will
+  produce false positives:
+  ```bash
+  unzip -o zanokit/build/outputs/aar/zanokit-release.aar -d /tmp/aar >/dev/null
+  for f in /tmp/aar/jni/*/libzanokit.so; do echo "$f $(strings $f | grep -c "$HOME")"; done  # all 0
+  ```
 
 ---
 
 ## CMakeLists.txt (`zanokit/CMakeLists.txt`)
 
 - Compiles three C++ sources into `libzanokit.so`: `zano_jni.cpp`, `wallet2_api_c.cpp`, `helpers.cpp`
-- All 17 `.a` libs declared as `STATIC IMPORTED` targets with paths `${EXTERNAL_LIBS_DIR}/${ANDROID_ABI}/lib*.a`
+- All 18 `.a` libs declared as `STATIC IMPORTED` targets with paths `${EXTERNAL_LIBS_DIR}/${ANDROID_ABI}/lib*.a`
 - Link order: Zano libs → Boost → OpenSSL → system `log`
 - `target_compile_definitions(zanokit PRIVATE ZANO_LIBS_AVAILABLE=1)` — enables the real JNI implementation (vs. stub mode)
 - Linker flag: `-Wl,-z,max-page-size=16384` — required for Android 15+ 16 KB page size
@@ -360,7 +401,7 @@ filesDir/ZanoKit/{walletId}/network_{0|1}/
 
 | | |
 |-|-|
-| Zano source version | 2.2.1.502 (`76a791cc`) + `patches/0001`–`0002`, `0004`; built with `patches/0003` |
+| Zano source version | 2.2.1.506 (`b76fa185`) + `patches/0001`–`0002`, `0004`; built with `patches/0003` |
 | Native asset ID | `d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a` |
 | Decimal places | 12 |
 | Block time | ~60 seconds |
