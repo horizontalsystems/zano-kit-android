@@ -101,10 +101,14 @@ class ZanoCore(
 
         // The engine connects to the daemon from native code, so the JVM proxy settings an
         // embedded Tor installs only reach it through here, applied again on every start
-        ZanoWalletApi.setSocksProxy(
-            System.getProperty("socksProxyHost") ?: "",
-            System.getProperty("socksProxyPort")?.toIntOrNull() ?: 0
-        )
+        val proxyHost = System.getProperty("socksProxyHost") ?: ""
+        // Same default as the JVM's own SOCKS sockets when only the host is set
+        val proxyPort = System.getProperty("socksProxyPort")?.toIntOrNull() ?: 1080
+        // Fail rather than connect in a way that differs from what the JVM proxy settings ask for
+        if (proxyHost.isNotEmpty() && proxyPort !in 1..65535) {
+            throw ZanoException("Invalid SOCKS proxy port: $proxyPort")
+        }
+        ZanoWalletApi.setSocksProxy(proxyHost, proxyPort)
         ZanoWalletApi.init(host, port, workingDir, 0)
 
         // restore_from_derivations prepends workingDir/wallets/ internally, so BIP39 wallets

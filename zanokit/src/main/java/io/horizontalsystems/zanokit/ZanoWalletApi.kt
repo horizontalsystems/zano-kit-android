@@ -105,6 +105,8 @@ class ZanoWalletApi(private val walletId: Long) {
 
         // An empty host connects directly
         fun setSocksProxy(host: String, port: Int) {
+            // The port is narrowed to uint16_t natively, so out-of-range values would wrap
+            require(host.isEmpty() || port in 1..65535) { "Invalid SOCKS proxy port: $port" }
             synchronized(nativeLock) { ZanoNative.setSocksProxy(host, port) }
         }
 
