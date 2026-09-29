@@ -161,6 +161,12 @@ const char* ZANO_PlainWallet_truncateLog() {
     return buffer;
     DEBUG_END()
 }
+//   void set_socks_proxy(const std::string& host, uint16_t port);
+void ZANO_PlainWallet_setSocksProxy(const char* host, uint16_t port) {
+    DEBUG_START()
+    plain_wallet::set_socks_proxy(std::string(host), port);
+    DEBUG_END()
+}
 //   std::string get_connectivity_status();
 const char* ZANO_PlainWallet_getConnectivityStatus() {
     DEBUG_START()

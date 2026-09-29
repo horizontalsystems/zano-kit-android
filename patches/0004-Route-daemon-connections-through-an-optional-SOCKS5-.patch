@@ -1,0 +1,186 @@
+From 9300f81b17c3a218c374e71b4cbaf26e8836df79 Mon Sep 17 00:00:00 2001
+From: Rafael <rafaelekol@gmail.com>
+Date: Tue, 29 Sep 2026 15:20:59 +0600
+Subject: [PATCH] PATCH:0004 Route daemon connections through an optional
+ SOCKS5 proxy
+
+plain_wallet reaches the daemon only through http_universal_client,
+which connected directly, so a wallet could not sync over Tor. A
+process-wide SOCKS5 proxy set with plain_wallet::set_socks_proxy now
+makes it connect through the existing socks5_proxy_transport, with
+hosts resolved at the proxy.
+---
+ contrib/epee/include/net/http_client.h | 89 ++++++++++++++++++++++----
+ src/wallet/plain_wallet_api.cpp        |  5 ++
+ src/wallet/plain_wallet_api.h          |  3 +
+ 3 files changed, 86 insertions(+), 11 deletions(-)
+
+diff --git a/contrib/epee/include/net/http_client.h b/contrib/epee/include/net/http_client.h
+index db0e119..629c3f4 100644
+--- a/contrib/epee/include/net/http_client.h
++++ b/contrib/epee/include/net/http_client.h
+@@ -35,8 +35,12 @@
+ #include <cctype>
+ #include <functional>
+ 
++#include <mutex>
++#include <optional>
++
+ #include "net_helper.h"
+ #include "http_client_base.h"
++#include "socks5_proxy_transport.h"
+ 
+ //#ifdef HTTP_ENABLE_GZIP
+ #include "gzip_encoding.h"
+@@ -921,11 +925,46 @@ namespace epee
+ 
+ 
+       //suitable for both http and https
++      // Process-wide SOCKS5 proxy for http_universal_client, which every daemon RPC of the
++      // wallet goes through. An empty host routes directly. Hosts are resolved by the proxy.
++      struct socks_proxy_config
++      {
++        std::string host;
++        uint16_t port = 0;
++        bool operator==(const socks_proxy_config& o) const { return host == o.host && port == o.port; }
++      };
++
++      inline std::mutex& socks_proxy_mutex()
++      {
++        static std::mutex m;
++        return m;
++      }
++
++      inline socks_proxy_config& socks_proxy_storage()
++      {
++        static socks_proxy_config c;
++        return c;
++      }
++
++      inline void set_socks_proxy(const std::string& host, uint16_t port)
++      {
++        std::lock_guard<std::mutex> lock(socks_proxy_mutex());
++        socks_proxy_storage() = socks_proxy_config{host, port};
++      }
++
++      inline socks_proxy_config get_socks_proxy()
++      {
++        std::lock_guard<std::mutex> lock(socks_proxy_mutex());
++        return socks_proxy_storage();
++      }
++
+       class http_universal_client: public i_http_client
+       {
+       public:
+-        http_universal_client(): m_pclient(new http_simple_client())
+-        {}
++        http_universal_client()
++        {
++          recreate_client();
++        }
+         // Forward all calls to m_pclient
+         void set_host_name(const std::string& name) override 
+         {
+@@ -933,12 +972,13 @@ namespace epee
+         }
+         bool connect(const std::string& host, int port, unsigned int timeout) override 
+         { 
++          apply_proxy_changes();
+           return m_pclient->connect(host, port, timeout); 
+         }
+         boost::asio::ip::tcp::socket& get_socket() override { return m_pclient->get_socket(); }        
+         bool set_timeouts(unsigned int connection_timeout, unsigned int recv_timeout) override { return m_pclient->set_timeouts(connection_timeout, recv_timeout); }
+-        bool connect(const std::string& host, std::string port) override { return m_pclient->connect(host, port); }
+-        bool connect(const std::string& host, const std::string& port, unsigned int timeout) override { return m_pclient->connect(host, port, timeout); }
++        bool connect(const std::string& host, std::string port) override { apply_proxy_changes(); return m_pclient->connect(host, port); }
++        bool connect(const std::string& host, const std::string& port, unsigned int timeout) override { apply_proxy_changes(); return m_pclient->connect(host, port, timeout); }
+         bool disconnect() override { return m_pclient->disconnect(); }
+         bool is_connected() override { return m_pclient->is_connected(); }
+         bool invoke_get(const std::string& uri, const std::string& body = std::string(), const http_response_info** ppresponse_info = nullptr, const fields_list& additional_params = fields_list()) override { return m_pclient->invoke_get(uri, body, ppresponse_info, additional_params); }
+@@ -949,19 +989,46 @@ namespace epee
+         {
+           if (m_is_ssl != is_ssl)
+           {
+-            if (is_ssl)
+-            {
++            m_is_ssl = is_ssl;
++            recreate_client();
++          }
++        }
++      private:
++        // Only called right before connecting, so an open connection keeps its client
++        void apply_proxy_changes()
++        {
++          if (!(get_socks_proxy() == m_proxy))
++            recreate_client();
++        }
++
++        void recreate_client()
++        {
++          m_proxy = get_socks_proxy();
++          if (m_proxy.host.empty())
++          {
++            if (m_is_ssl)
+               m_pclient.reset(new https_simple_client());
+-            }
+             else
+-            {
+               m_pclient.reset(new http_simple_client());
+-            }
+-            m_is_ssl = is_ssl;
++          }
++          else if (m_is_ssl)
++          {
++            auto client = new http_simple_client_t<true, tools::socks5::socks5_proxy_transport<true>>();
++            client->get_transport().set_socks_proxy(m_proxy.host, m_proxy.port);
++            client->get_transport().set_use_remote_dns(true);
++            m_pclient.reset(client);
++          }
++          else
++          {
++            auto client = new http_simple_client_t<false, tools::socks5::socks5_proxy_transport<false>>();
++            client->get_transport().set_socks_proxy(m_proxy.host, m_proxy.port);
++            client->get_transport().set_use_remote_dns(true);
++            m_pclient.reset(client);
+           }
+         }
+-      private:
++
+         bool m_is_ssl = false;
++        socks_proxy_config m_proxy;
+         std::shared_ptr<i_http_client> m_pclient;
+       };
+ 
+diff --git a/src/wallet/plain_wallet_api.cpp b/src/wallet/plain_wallet_api.cpp
+index 2174101..0a04928 100644
+--- a/src/wallet/plain_wallet_api.cpp
++++ b/src/wallet/plain_wallet_api.cpp
+@@ -400,6 +400,11 @@ namespace plain_wallet
+     PLAIN_WALLET_CATCH();
+   }
+ 
++  void set_socks_proxy(const std::string& host, uint16_t port)
++  {
++    epee::net_utils::http::set_socks_proxy(host, port);
++  }
++
+   std::string get_version()
+   {
+     return PROJECT_VERSION_LONG;
+diff --git a/src/wallet/plain_wallet_api.h b/src/wallet/plain_wallet_api.h
+index f2dd219..cfe1a6f 100644
+--- a/src/wallet/plain_wallet_api.h
++++ b/src/wallet/plain_wallet_api.h
+@@ -27,6 +27,9 @@ namespace plain_wallet
+   std::string get_logs_buffer();
+   std::string truncate_log();
+   std::string get_connectivity_status();
++  // Routes every daemon connection through a SOCKS5 proxy, resolving hosts at the proxy; an
++  // empty host connects directly again. Applies to connections opened from then on.
++  void set_socks_proxy(const std::string& host, uint16_t port);
+ 
+   std::string open(const std::string& path, const std::string& password);
+   std::string restore(const std::string& seed, const std::string& path, const std::string& password, const std::string& seed_password);
+-- 
+2.54.0
+

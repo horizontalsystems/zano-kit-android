@@ -104,6 +104,7 @@ Boost libraries: atomic, chrono, date_time, filesystem, program_options, regex, 
 cd ~/zano_native_lib/Zano
 git am ~/StudioProjects/zano-kit-android/patches/0001-Add-generate_address-and-generate_address_from_deriv.patch
 git am ~/StudioProjects/zano-kit-android/patches/0002-Increase-plain_wallet-RPC-timeout-to-20s-with-3-atte.patch
+git am ~/StudioProjects/zano-kit-android/patches/0004-Route-daemon-connections-through-an-optional-SOCKS5-.patch
 
 # Build-system patch (applies to zano_native_lib itself, not the Zano submodule):
 cd ~/zano_native_lib
@@ -192,7 +193,7 @@ hash string alone, while the lib holding the actual fix may show up on a single 
 
 ## Patches
 
-All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
+All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
 
 ### `0001-Add-generate_address-and-generate_address_from_deriv.patch`
 
@@ -265,6 +266,23 @@ Fixes two send-time problems observed in production (Zano 2.2.1.502 update):
   unzip -o zanokit/build/outputs/aar/zanokit-release.aar -d /tmp/aar >/dev/null
   for f in /tmp/aar/jni/*/libzanokit.so; do echo "$f $(strings $f | grep -c "$HOME")"; done  # all 0
   ```
+
+### `0004-Route-daemon-connections-through-an-optional-SOCKS5-.patch`
+
+`plain_wallet` reaches the daemon only through `epee::net_utils::http::http_universal_client`
+(the `default_http_core_proxy` it syncs with and `proxy_to_daemon`), which always connected
+directly. Zano's own SOCKS5 support covers only transaction and block relays, so a wallet could
+not sync over Tor.
+
+- **`contrib/epee/include/net/http_client.h`** — a process-wide SOCKS5 setting
+  (`set_socks_proxy`/`get_socks_proxy`). When it is set, `http_universal_client` builds its
+  client on the existing `tools::socks5::socks5_proxy_transport` with remote DNS, so hosts are
+  resolved at the proxy. The setting is read on every connect, so a changed proxy applies to
+  the next connection while an open one keeps its client.
+- **`src/wallet/plain_wallet_api.h/.cpp`** — `plain_wallet::set_socks_proxy(host, port)`; an
+  empty host connects directly again. The kit calls it through `ZanoWalletApi.setSocksProxy`
+  with the JVM `socksProxyHost`/`socksProxyPort` on every `ZanoCore` start. Copy the patched
+  `plain_wallet_api.h` into `external-libs/include/` (Step 5).
 
 ---
 

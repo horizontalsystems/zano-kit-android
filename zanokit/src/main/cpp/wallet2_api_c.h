@@ -40,6 +40,7 @@ extern ADDAPI const char* ZANO_PlainWallet_generateRandomKey(uint64_t lenght);
 extern ADDAPI const char* ZANO_PlainWallet_getLogsBuffer();
 extern ADDAPI const char* ZANO_PlainWallet_truncateLog();
 extern ADDAPI const char* ZANO_PlainWallet_getConnectivityStatus();
+extern ADDAPI void ZANO_PlainWallet_setSocksProxy(const char* host, uint16_t port);
 extern ADDAPI const char* ZANO_PlainWallet_open(const char* path, const char* password);
 extern ADDAPI const char* ZANO_PlainWallet_restore(const char* seed, const char* path, const char* password, const char* seed_password);
 extern ADDAPI const char* ZANO_PlainWallet_generate(const char* path, const char* password);

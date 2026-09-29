@@ -103,6 +103,11 @@ class ZanoWalletApi(private val walletId: Long) {
             synchronized(nativeLock) { ZanoNative.init2(host, port, workingDir, logLevel) }
         }
 
+        // An empty host connects directly
+        fun setSocksProxy(host: String, port: Int) {
+            synchronized(nativeLock) { ZanoNative.setSocksProxy(host, port) }
+        }
+
         fun isWalletExist(path: String): Boolean = ZanoNative.isWalletExist(path)
 
         fun openWallet(path: String, password: String): String? =

@@ -8,6 +8,7 @@ object ZanoNative {
     // Library lifecycle
     external fun init2(ip: String, port: String, workingDir: String, logLevel: Int): String?
     external fun deinit()
+    external fun setSocksProxy(host: String, port: Int)
     external fun getVersion(): String?
 
     // Wallet file operations

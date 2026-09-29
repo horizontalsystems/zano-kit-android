@@ -27,6 +27,9 @@ namespace plain_wallet
   std::string get_logs_buffer();
   std::string truncate_log();
   std::string get_connectivity_status();
+  // Routes every daemon connection through a SOCKS5 proxy, resolving hosts at the proxy; an
+  // empty host connects directly again. Applies to connections opened from then on.
+  void set_socks_proxy(const std::string& host, uint16_t port);
 
   std::string open(const std::string& path, const std::string& password);
   std::string restore(const std::string& seed, const std::string& path, const std::string& password, const std::string& seed_password);

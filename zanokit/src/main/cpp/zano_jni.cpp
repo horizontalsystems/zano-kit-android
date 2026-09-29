@@ -50,6 +50,15 @@ Java_io_horizontalsystems_zanokit_ZanoNative_init2(
 }
 
 JNIEXPORT void JNICALL
+Java_io_horizontalsystems_zanokit_ZanoNative_setSocksProxy(
+        JNIEnv *env, jobject, jstring jHost, jint port) {
+#ifdef ZANO_LIBS_AVAILABLE
+    auto host = jstring_to_string(env, jHost);
+    ZANO_PlainWallet_setSocksProxy(host.c_str(), static_cast<uint16_t>(port));
+#endif
+}
+
+JNIEXPORT void JNICALL
 Java_io_horizontalsystems_zanokit_ZanoNative_deinit(JNIEnv *env, jobject) {
     LOGI("deinit called");
 #ifdef ZANO_LIBS_AVAILABLE

@@ -99,6 +99,12 @@ class ZanoCore(
         val workingDir = walletDir()
         File(workingDir).mkdirs()
 
+        // The engine connects to the daemon from native code, so the JVM proxy settings an
+        // embedded Tor installs only reach it through here, applied again on every start
+        ZanoWalletApi.setSocksProxy(
+            System.getProperty("socksProxyHost") ?: "",
+            System.getProperty("socksProxyPort")?.toIntOrNull() ?: 0
+        )
         ZanoWalletApi.init(host, port, workingDir, 0)
 
         // restore_from_derivations prepends workingDir/wallets/ internally, so BIP39 wallets
