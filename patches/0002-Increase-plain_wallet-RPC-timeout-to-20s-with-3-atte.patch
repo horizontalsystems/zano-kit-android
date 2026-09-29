@@ -1,4 +1,4 @@
-From 8f022c5c65187471ea79bedcbf400df959f23cda Mon Sep 17 00:00:00 2001
+From 340df9140d74b0c3adab397186e2d8fe0075085c Mon Sep 17 00:00:00 2001
 From: chyngyz <chyngyz.omurov@gmail.com>
 Date: Thu, 16 Jul 2026 16:21:42 +0600
 Subject: [PATCH] PATCH:0002 Increase plain_wallet RPC timeout to 20s with 3
@@ -10,7 +10,7 @@ Subject: [PATCH] PATCH:0002 Increase plain_wallet RPC timeout to 20s with 3
  2 files changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/src/wallet/wallet_rpc_server.cpp b/src/wallet/wallet_rpc_server.cpp
-index 5c7a787f..0d6c84c7 100644
+index b4b44ef2..27426a53 100644
 --- a/src/wallet/wallet_rpc_server.cpp
 +++ b/src/wallet/wallet_rpc_server.cpp
 @@ -58,7 +58,7 @@ POP_VS_WARNINGS
@@ -23,7 +23,7 @@ index 5c7a787f..0d6c84c7 100644
          } \
          catch (const tools::error::wallet_error& e) \
 diff --git a/src/wallet/wallets_manager.cpp b/src/wallet/wallets_manager.cpp
-index 02f47730..7ec24143 100644
+index 340b2110..c89afc5e 100644
 --- a/src/wallet/wallets_manager.cpp
 +++ b/src/wallet/wallets_manager.cpp
 @@ -42,8 +42,8 @@

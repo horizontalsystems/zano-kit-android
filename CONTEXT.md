@@ -63,10 +63,12 @@ git clone --recursive https://github.com/hyle-team/zano_native_lib ~/zano_native
 cd ~/zano_native_lib
 
 # Pin the Zano source to the release the current external-libs were built from
-# (Zano 2.2.1.506 — the zano_native_lib pin may lag behind the release tag):
+# (Zano 2.2.3.601 — untagged, head of the release_compact branch; Zano confirmed it as the
+# build for mobile wallets. node.zano.org answers GENESIS_MISMATCH to getblocks.bin requests
+# without m_return_compact, i.e. to 600 and older):
 cd Zano
-git fetch --tags
-git checkout 2.2.1.506   # commit b76fa185850a9134ecf207bca74c0815c3d49838
+git fetch origin
+git checkout 9adfb6b0   # 2.2.3.601 "lifted version" on release_compact
 git submodule update --init contrib/miniupnp contrib/jwt-cpp contrib/bitcoin-secp256k1
 cd ..
 ```
@@ -102,7 +104,6 @@ Boost libraries: atomic, chrono, date_time, filesystem, program_options, regex, 
 cd ~/zano_native_lib/Zano
 git am ~/StudioProjects/zano-kit-android/patches/0001-Add-generate_address-and-generate_address_from_deriv.patch
 git am ~/StudioProjects/zano-kit-android/patches/0002-Increase-plain_wallet-RPC-timeout-to-20s-with-3-atte.patch
-git am ~/StudioProjects/zano-kit-android/patches/0004-Fix-unaligned-chacha-key-iv-access-crash-on-ARM32.patch
 
 # Build-system patch (applies to zano_native_lib itself, not the Zano submodule):
 cd ~/zano_native_lib
@@ -169,7 +170,7 @@ After copying, `git status` on `external-libs/` tells you whether the rebuild di
 
 **On a pure Zano version bump, expect exactly two libs to change per ABI: `libwallet.a` and
 `libcurrency_core.a`.** They are the only archives that embed the version string, and that string
-carries the git hash of the patch-stack HEAD (`2.2.1.506[3a18f65]`) — so they change on *every*
+carries the git hash of the patch-stack HEAD (e.g. `2.2.1.506[3a18f65]`) — so they change on *every*
 rebuild even when no source did. Everything else is content-addressed in practice: the archives carry
 no timestamps, so unchanged sources compiled with unchanged flags produce byte-identical `.a` files.
 
@@ -178,7 +179,7 @@ Read anything else that changed as a signal, not noise:
 | What changed | What it means |
 |---|---|
 | `libcommon.a` | `src/common/` changed upstream — or, more likely, **compile flags/toolchain moved**. A global flag rewrites every object: introducing `patches/0003` alone changed this lib (117 embedded path strings → 0) with no source change at all. |
-| `libzano_crypto.a` | `src/crypto/` changed — e.g. `patches/0004` changed it on `armeabi-v7a` only, since the `memcpy` helpers alter codegen solely on strict-alignment targets. |
+| `libzano_crypto.a` | `src/crypto/` changed — e.g. the chacha unaligned-access fix (former `patches/0004`) changed it on `armeabi-v7a` only, since the `memcpy` helpers alter codegen solely on strict-alignment targets. |
 | `libz.a` | zlib moved. It has never changed to date; treat it as suspicious. |
 | Boost / OpenSSL `.a` | the `_libs_android/` prebuilts were refetched or rebuilt — not something a Zano bump should touch. |
 | *only one or two ABIs* of a lib | a genuine ABI-specific codegen difference (normal for crypto/alignment work), **not** a partial copy. |
@@ -191,7 +192,7 @@ hash string alone, while the lib holding the actual fix may show up on a single 
 
 ## Patches
 
-All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
+All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
 
 ### `0001-Add-generate_address-and-generate_address_from_deriv.patch`
 
@@ -232,10 +233,13 @@ Fixes two send-time problems observed in production (Zano 2.2.1.502 update):
 **`src/wallet/wallet_rpc_server.cpp`**
 - The `not_enough_money` catch handler reports `e.to_string()` instead of `e.what()` (empty for this type), so errors include `available: X, required: Y = amount + fee` — enough to tell unsynced wallet, locked change, and fee shortfall apart remotely.
 
-### `0004-Fix-unaligned-chacha-key-iv-access-crash-on-ARM32.patch`
+### Retired: `0004-Fix-unaligned-chacha-key-iv-access-crash-on-ARM32.patch`
+
+**Removed at 2.2.3.600/601** — the source contains upstream commit `63d2d715` (`chacha.c` has the
+`u8to32_little` memcpy helpers), and the patch no longer applies. Kept here for history.
 
 **`src/crypto/chacha.c`**
-- Replaces the `U8TO32_LITTLE`/`U32TO8_LITTLE` macros (which cast byte pointers to `uint32_t*`) with `memcpy`-based inline helpers.
+- Replaced the `U8TO32_LITTLE`/`U32TO8_LITTLE` macros (which cast byte pointers to `uint32_t*`) with `memcpy`-based inline helpers.
 - Why: `wallet2::load_keys`/`store_keys` pass `keys_file_data.iv`, which sits at offset 1 (a `uint8_t version` precedes the `#pragma pack(1)` `chacha_iv`), so the iv pointer is always misaligned. The aligned-pointer cast let the compiler emit `LDM`/`LDRD` on armeabi-v7a — instructions that fault unconditionally on unaligned addresses — crashing every wallet keys-file open/save on 32-bit ARM devices (SIGBUS in `chacha8`, Zano 2.1.x, or `chacha`/`chacha_with_counter`, Zano 2.2.x). arm64/x86 tolerate unaligned plain loads, so only ARM32 crashed.
 - `memcpy` of 4 bytes compiles to the identical single load/store on arm64/x86 and to safe byte accesses on strict-alignment ARM32 — no performance change where it previously worked.
 - Bug exists upstream (any strict-alignment 32-bit build). **Upstreamed and merged** as
@@ -401,7 +405,7 @@ filesDir/ZanoKit/{walletId}/network_{0|1}/
 
 | | |
 |-|-|
-| Zano source version | 2.2.1.506 (`b76fa185`) + `patches/0001`–`0002`, `0004`; built with `patches/0003` |
+| Zano source version | 2.2.3.601 (`9adfb6b0` on `release_compact`, untagged; HF7 + rollback to 3,833,000 + compact sync) + `patches/0001`–`0002`; built with `patches/0003` |
 | Native asset ID | `d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a` |
 | Decimal places | 12 |
 | Block time | ~60 seconds |

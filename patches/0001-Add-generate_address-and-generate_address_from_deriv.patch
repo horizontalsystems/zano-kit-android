@@ -1,4 +1,4 @@
-From 079a7c4a263f7aacd258a0839c09434c055689e0 Mon Sep 17 00:00:00 2001
+From e2a51bebd1c31a8fdc51c50dfb015f1e513bd6da Mon Sep 17 00:00:00 2001
 From: chyngyz <chyngyz.omurov@gmail.com>
 Date: Thu, 9 Jul 2026 16:46:17 +0600
 Subject: [PATCH] PATCH:0001 Add generate_address and
@@ -6,15 +6,15 @@ Subject: [PATCH] PATCH:0001 Add generate_address and
 
 ---
  src/currency_core/account.h     |  3 +--
- src/wallet/plain_wallet_api.cpp | 35 +++++++++++++++++++++++++++++++++
+ src/wallet/plain_wallet_api.cpp | 37 ++++++++++++++++++++++++++++++++-
  src/wallet/plain_wallet_api.h   |  6 +++++-
- 3 files changed, 41 insertions(+), 3 deletions(-)
+ 3 files changed, 42 insertions(+), 4 deletions(-)
 
 diff --git a/src/currency_core/account.h b/src/currency_core/account.h
-index 855f7ed6..e2061f85 100644
+index 981ae114..3bf7151d 100644
 --- a/src/currency_core/account.h
 +++ b/src/currency_core/account.h
-@@ -87,7 +87,7 @@ namespace currency
+@@ -88,7 +88,7 @@ namespace currency
      static bool is_seed_password_protected(const std::string& seed_phrase, bool& is_password_protected);
      static bool is_seed_tracking(const std::string& seed_phrase);
      static void crypt_with_pass(const void* scr_data, std::size_t src_length, void* dst_data, const std::string& password);
@@ -23,7 +23,7 @@ index 855f7ed6..e2061f85 100644
  
      BEGIN_KV_SERIALIZE_MAP()
        KV_SERIALIZE(m_keys)
-@@ -96,7 +96,6 @@ namespace currency
+@@ -97,7 +97,6 @@ namespace currency
      END_KV_SERIALIZE_MAP()
  
    private:
@@ -32,13 +32,14 @@ index 855f7ed6..e2061f85 100644
  
      account_keys m_keys;
 diff --git a/src/wallet/plain_wallet_api.cpp b/src/wallet/plain_wallet_api.cpp
-index 0cd4746b..21741019 100644
+index 048dc1b4..21741019 100644
 --- a/src/wallet/plain_wallet_api.cpp
 +++ b/src/wallet/plain_wallet_api.cpp
 @@ -948,4 +948,39 @@ namespace plain_wallet
    {
      return TX_DEFAULT_FEE;
    }
+-}
 +
 +  uint64_t get_timestamp_from_word(const std::string& word, bool& password_used)
 +  {
@@ -74,7 +75,7 @@ index 0cd4746b..21741019 100644
 +    acc.set_null();
 +    return result;
 +  }
- }
++}
 \ No newline at end of file
 diff --git a/src/wallet/plain_wallet_api.h b/src/wallet/plain_wallet_api.h
 index ec5af47d..f2dd2197 100644
