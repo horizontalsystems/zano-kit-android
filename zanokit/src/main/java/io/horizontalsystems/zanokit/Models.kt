@@ -39,6 +39,15 @@ sealed class SyncState {
     }
 }
 
+/** What a daemon answered to [ZanoKit.pingNodes]. */
+data class NodePingResult(
+    val daemonAddress: String,
+    val responseTime: Double,   // milliseconds; Double.MAX_VALUE means unreachable
+    val height: Long,           // 0 unless isValid
+    // The daemon answered and has caught up with the network, so a wallet can sync from it
+    val isValid: Boolean,
+)
+
 data class AssetInfo(
     val assetId: String,
     val ticker: String,

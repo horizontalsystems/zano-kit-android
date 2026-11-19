@@ -61,6 +61,17 @@ class ZanoKit private constructor(
             return ZanoKit(core, storage, UUID.randomUUID().toString())
         }
 
+        private val nodePinger by lazy { NodePinger() }
+
+        /**
+         * Asks each daemon for its state, all at once, and reports how long each took and
+         * the height of those a wallet can sync from. Needs no wallet, so it can run at app
+         * start or for a node that is not the current one. A daemon that does not answer
+         * within 5 seconds is reported as not valid.
+         */
+        suspend fun pingNodes(daemonAddresses: List<String>): List<NodePingResult> =
+            nodePinger.ping(daemonAddresses)
+
         fun isValidAddress(address: String): Boolean = ZanoWalletApi.isValidAddress(address)
 
         fun restoreHeightForDate(date: Date): Long = RestoreHeight.getHeight(date)

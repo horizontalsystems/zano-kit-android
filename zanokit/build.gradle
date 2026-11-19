@@ -86,12 +86,16 @@ dependencies {
     implementation libs.kotlinx.coroutines.android
     implementation libs.timber
     implementation libs.bcprov
+    implementation libs.okhttp
 
     implementation libs.androidx.room.runtime
     implementation libs.androidx.room.ktx
     ksp libs.androidx.room.compiler
 
     testImplementation libs.junit
+    testImplementation libs.okhttp.mockwebserver
+    // org.json is part of Android; unit tests run on the JVM and need the real one
+    testImplementation libs.json
     androidTestImplementation libs.androidx.junit
     androidTestImplementation libs.androidx.espresso.core
 }
