@@ -10,6 +10,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.TimeUnit
 
 class NodePingerTest {
 
@@ -95,6 +96,17 @@ class NodePingerTest {
         assertEquals("/json_rpc", request.path)
         assertEquals("POST", request.method)
         assertTrue(request.body.readUtf8().contains("\"method\":\"getinfo\""))
+    }
+
+    // Headers can arrive at once while the answer itself is still being produced
+    @Test
+    fun responseTimeCoversTheAnswerNotOnlyItsHeaders() = runBlocking {
+        val slowBody = server(MockResponse().setBody(getInfo()).setBodyDelay(400, TimeUnit.MILLISECONDS))
+
+        val result = NodePinger(timeoutMs = 3_000).ping(listOf(slowBody)).single()
+
+        assertTrue(result.isValid)
+        assertTrue("reported ${result.responseTime} ms", result.responseTime >= 350)
     }
 
     @Test

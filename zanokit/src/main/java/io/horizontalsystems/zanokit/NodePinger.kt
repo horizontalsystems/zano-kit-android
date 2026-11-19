@@ -36,8 +36,9 @@ internal class NodePinger(timeoutMs: Long = TIMEOUT_MS) {
         try {
             val start = System.nanoTime()
             client.newCall(request(daemonAddress)).execute().use { response ->
-                val elapsedMs = (System.nanoTime() - start) / 1_000_000.0
                 val body = response.body?.string()
+                // Taken once the answer is read: the headers can arrive long before it
+                val elapsedMs = (System.nanoTime() - start) / 1_000_000.0
                 if (!response.isSuccessful || body == null) return@withContext unreachable(daemonAddress)
 
                 val height = syncedHeight(body) ?: return@withContext unreachable(daemonAddress)
