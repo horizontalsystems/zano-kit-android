@@ -98,6 +98,26 @@ class NodePingerTest {
         assertTrue(request.body.readUtf8().contains("\"method\":\"getinfo\""))
     }
 
+    // The engine takes an address without a scheme, and so must the ping
+    @Test
+    fun addressWithoutASchemeIsAsked() = runBlocking {
+        val address = server(MockResponse().setBody(getInfo()))
+
+        val result = NodePinger().ping(listOf(address.removePrefix("http://").trimEnd('/'))).single()
+
+        assertTrue(result.isValid)
+        assertEquals("/json_rpc", servers.single().takeRequest().path)
+    }
+
+    @Test
+    fun addressIsAskedWhereTheEngineConnects() {
+        assertEquals("https://zano.unstoppable.money:443/json_rpc", NodePinger.url("https://zano.unstoppable.money:443"))
+        assertEquals("https://node.zano.org/json_rpc", NodePinger.url("https://node.zano.org/"))
+        assertEquals("http://10.0.2.2:18547/json_rpc", NodePinger.url("http://10.0.2.2:18547"))
+        assertEquals("http://node.zano.org:11211/json_rpc", NodePinger.url("node.zano.org:11211"))
+        assertEquals("http://node.zano.org:8081/json_rpc", NodePinger.url("node.zano.org"))
+    }
+
     // Headers can arrive at once while the answer itself is still being produced
     @Test
     fun responseTimeCoversTheAnswerNotOnlyItsHeaders() = runBlocking {

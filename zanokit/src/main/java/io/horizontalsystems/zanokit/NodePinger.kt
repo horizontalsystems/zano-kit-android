@@ -51,7 +51,7 @@ internal class NodePinger(timeoutMs: Long = TIMEOUT_MS) {
 
     private fun request(daemonAddress: String): Request =
         Request.Builder()
-            .url(daemonAddress.trimEnd('/') + "/json_rpc")
+            .url(url(daemonAddress))
             .post(GET_INFO.toRequestBody(jsonMediaType))
             .build()
 
@@ -60,6 +60,22 @@ internal class NodePinger(timeoutMs: Long = TIMEOUT_MS) {
 
     companion object {
         private const val TIMEOUT_MS = 5_000L
+
+        // The port the engine connects to when the address names none
+        private const val DEFAULT_PORT = 8081
+
+        /**
+         * Where to ask a daemon given in any form the engine takes (see
+         * ZanoWalletApi.parseAddress). An address without a scheme is reached without TLS, and
+         * one that also has no port at the default port.
+         */
+        fun url(daemonAddress: String): String {
+            val address = daemonAddress.trim().trimEnd('/')
+            if (address.startsWith("http://") || address.startsWith("https://")) return "$address/json_rpc"
+
+            val hasPort = address.substringAfterLast(':', "").toIntOrNull() != null
+            return "http://" + (if (hasPort) address else "$address:$DEFAULT_PORT") + "/json_rpc"
+        }
 
         private val jsonMediaType = "application/json".toMediaType()
 
