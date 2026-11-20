@@ -446,8 +446,19 @@ class ZanoCore(
     )
 
     // Submits a transfer and caches the sent info for tx enrichment on next poll
-    fun send(toAddress: String, assetId: String, amount: Long, fee: Long, memo: String?): String {
-        val txHash = api.transfer(toAddress, assetId, amount, fee, comment = memo)
+    suspend fun send(toAddress: String, assetId: String, amount: Long, fee: Long, memo: String?): String {
+        val lookup = SentTransferLookup({ api.getRecentTransactions(count = SentTransferLookup.LIST_SIZE) })
+        val knownBefore = lookup.knownHashes()
+        val txHash = try {
+            api.transfer(toAddress, assetId, amount, fee, comment = memo)
+        } catch (error: ZanoException) {
+            // The daemon may have taken the transaction although the wallet was told it failed:
+            // its answer was lost, or it rejected a repeat of a broadcast it already had.
+            // Reporting that as a failure invites sending again, which would pay twice.
+            if (!error.mayHaveBeenSent) throw error
+            val toSelf = walletAddress.isNotEmpty() && toAddress == walletAddress
+            lookup.find(knownBefore, assetId, amount, fee, toSelf) ?: throw error
+        }
         storage.saveSentTransfer(txHash, assetId, amount, toAddress)
         refresh()
         return txHash
