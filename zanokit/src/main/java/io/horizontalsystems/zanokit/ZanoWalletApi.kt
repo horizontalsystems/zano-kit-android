@@ -70,7 +70,7 @@ class ZanoWalletApi(private val walletId: Long) {
             put("params", paramsObj)
         }
         val raw = synchronized(nativeLock) { ZanoNative.invoke(walletId, request.toString()) }
-            ?: throw ZanoException("transfer: null response")
+            ?: throw BroadcastUnconfirmedException("transfer: null response")
         val result = parseResult(raw) ?: run {
             val errorMsg = try {
                 JSONObject(raw).optJSONObject("error")?.optString("message")
@@ -194,19 +194,49 @@ class ZanoWalletApi(private val walletId: Long) {
         return parseResponse(raw).getOrNull()
     }
 
-    private fun parseTransferError(message: String?): ZanoException {
-        if (message != null) {
-            val insufficientFundsPattern = Regex("NOT_ENOUGH_MONEY|not enough money|insufficient", RegexOption.IGNORE_CASE)
-            if (insufficientFundsPattern.containsMatchIn(message)) return InsufficientFundsException(message)
-            val nodeUnreachablePattern = Regex("no connection to daemon|DAEMON_IS_BUSY", RegexOption.IGNORE_CASE)
-            if (nodeUnreachablePattern.containsMatchIn(message)) return NodeUnreachableException(message)
-        }
-        return SendFailedException(message)
-    }
 }
+
+private val insufficientFundsPattern = Regex("NOT_ENOUGH_MONEY|not enough money|insufficient", RegexOption.IGNORE_CASE)
+private val noConnectionPattern = Regex("no connection to daemon", RegexOption.IGNORE_CASE)
+
+// The daemon answered that it is busy, so it did not take the transaction
+private val daemonBusyPattern = Regex("DAEMON_IS_BUSY", RegexOption.IGNORE_CASE)
+
+// The wallet names the daemon call that got no answer. These are the calls that only read from
+// the daemon, and the daemon's own answer that it is offline: none of them hands it the
+// transaction.
+private val readCallUnansweredPattern = Regex(
+    "no connection to daemon,\\s*request\\s*=\\s*(?:getrandom_outs\\d*\\.bin|get_o_indexes\\.bin|getblocks\\.bin|" +
+        "get_blocks_details|get_tx_pool|Transfer attempt while daemon offline)\\s*$",
+    RegexOption.IGNORE_CASE,
+)
+
+internal fun parseTransferError(message: String?): ZanoException {
+    if (message == null) return SendFailedException(null)
+    if (insufficientFundsPattern.containsMatchIn(message)) return InsufficientFundsException(message)
+    if (readCallUnansweredPattern.containsMatchIn(message)) return NodeUnreachableException(message)
+    // Any other call without an answer is taken for the broadcast: "sendrawtransaction" today,
+    // and whatever a later wallet engine calls it. For the broadcast the wallet raises the same
+    // error as for the calls before it, although the daemon may have taken the transaction and
+    // only its answer was lost. A name this list does not know must not read as safe to repeat.
+    if (noConnectionPattern.containsMatchIn(message)) return BroadcastUnconfirmedException(message)
+    if (daemonBusyPattern.containsMatchIn(message)) return NodeUnreachableException(message)
+    return SendFailedException(message)
+}
+
+// The wallet tries the broadcast again when it gets no answer. A daemon that took the first try
+// rejects the repeat, which reads the same as a transaction it refused.
+private val rejectedByDaemonPattern = Regex("rejected by daemon", RegexOption.IGNORE_CASE)
+
+internal val ZanoException.mayHaveBeenSent: Boolean
+    get() = this is BroadcastUnconfirmedException ||
+        (this is SendFailedException && message?.let { rejectedByDaemonPattern.containsMatchIn(it) } == true)
 
 open class ZanoException(message: String?) : Exception(message)
 class InsufficientFundsException(message: String?) : ZanoException(message)
-// The node RPC failed or timed out mid-send (before broadcast) — retryable.
+// A daemon call failed or timed out before the broadcast: nothing was sent, sending again is safe.
 class NodeUnreachableException(message: String?) : ZanoException(message)
+// The transaction was handed to the daemon and no answer came back, and the wallet did not find
+// it in the daemon's pool afterwards: it may still be in the network. Sending again can pay twice.
+class BroadcastUnconfirmedException(message: String?) : ZanoException(message)
 class SendFailedException(message: String?) : ZanoException(message)
