@@ -1,0 +1,41 @@
+From 2b36006c8b96a2dbba937d805e063c8caae90c3d Mon Sep 17 00:00:00 2001
+From: chyngyz <chyngyz.omurov@gmail.com>
+Date: Fri, 20 Nov 2026 18:30:41 +0600
+Subject: [PATCH] PATCH:0005 Name the daemon call in a no-connection transfer
+ error
+
+A wallet RPC that fails with no_connection_to_daemon answered with
+e.what(), which is built by the base class's non-virtual to_string()
+and so drops the request: the caller got the same text whether the
+decoy request or the broadcast itself went unanswered. Only the log
+line named the call.
+
+The two must be told apart: after a failed decoy request nothing was
+sent, after an unanswered sendrawtransaction the daemon may have taken
+the transaction. Answer with e.to_string(), which ends in
+", request = <call>".
+---
+ src/wallet/wallet_rpc_server.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/wallet/wallet_rpc_server.cpp b/src/wallet/wallet_rpc_server.cpp
+index 27426a53..b3a58bae 100644
+--- a/src/wallet/wallet_rpc_server.cpp
++++ b/src/wallet/wallet_rpc_server.cpp
+@@ -61,6 +61,13 @@ POP_VS_WARNINGS
+           er.message = std::string("WALLET_RPC_ERROR_CODE_NOT_ENOUGH_MONEY: ") + e.to_string(); \
+           return false; \
+         } \
++        catch (const tools::error::no_connection_to_daemon& e) \
++        { \
++          /* to_string() names the daemon call that got no answer; what() drops it */ \
++          er.code = WALLET_RPC_ERROR_CODE_GENERIC_ERROR; \
++          er.message = std::string("WALLET_RPC_ERROR_CODE_GENERIC_ERROR: ") + e.to_string(); \
++          return false; \
++        } \
+         catch (const tools::error::wallet_error& e) \
+         { \
+           er.code = WALLET_RPC_ERROR_CODE_GENERIC_TRANSFER_ERROR; \
+-- 
+2.50.1 (Apple Git-155)
+

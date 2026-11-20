@@ -105,6 +105,7 @@ cd ~/zano_native_lib/Zano
 git am ~/StudioProjects/zano-kit-android/patches/0001-Add-generate_address-and-generate_address_from_deriv.patch
 git am ~/StudioProjects/zano-kit-android/patches/0002-Increase-plain_wallet-RPC-timeout-to-20s-with-3-atte.patch
 git am ~/StudioProjects/zano-kit-android/patches/0004-Route-daemon-connections-through-an-optional-SOCKS5-.patch
+git am ~/StudioProjects/zano-kit-android/patches/0005-Name-the-daemon-call-in-a-no-connection-transfer-er.patch
 
 # Build-system patch (applies to zano_native_lib itself, not the Zano submodule):
 cd ~/zano_native_lib
@@ -193,7 +194,7 @@ hash string alone, while the lib holding the actual fix may show up on a single 
 
 ## Patches
 
-All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
+All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004`/`0005` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
 
 ### `0001-Add-generate_address-and-generate_address_from_deriv.patch`
 
@@ -283,6 +284,24 @@ not sync over Tor.
   empty host connects directly again. The kit calls it through `ZanoWalletApi.setSocksProxy`
   with the JVM `socksProxyHost`/`socksProxyPort` on every `ZanoCore` start. Copy the patched
   `plain_wallet_api.h` into `external-libs/include/` (Step 5).
+
+### `0005-Name-the-daemon-call-in-a-no-connection-transfer-er.patch`
+
+A transfer that fails with `no_connection_to_daemon` answered with `e.what()`. That text is built
+by the base class's `to_string()`, which is not virtual, so it drops the request: the kit got
+`[type] wallet2.cpp:<line>` and `no connection to daemon`, the same whether the decoy request or
+the broadcast itself went unanswered. Only the engine's log line named the call.
+
+- **`src/wallet/wallet_rpc_server.cpp`** — `WALLET_RPC_CATCH_TRY_ENTRY` catches
+  `no_connection_to_daemon` and answers with `e.to_string()`, which ends in
+  `, request = <call>`.
+
+`parseTransferError` in `ZanoWalletApi.kt` depends on it: a call that only reads from the daemon
+is `NodeUnreachableException` (nothing was sent, sending again is safe), any other text is
+`BroadcastUnconfirmedException`. Without this patch every such failure reads as unconfirmed.
+That is safe, but a send that failed before the broadcast then ends in the caller's "may have
+been sent" handling. After an engine update, check on a device that a refused
+`getrandom_outs4.bin` still comes back as `NodeUnreachableException`.
 
 ---
 
@@ -423,7 +442,7 @@ filesDir/ZanoKit/{walletId}/network_{0|1}/
 
 | | |
 |-|-|
-| Zano source version | 2.2.3.601 (`9adfb6b0` on `release_compact`, untagged; HF7 + rollback to 3,833,000 + compact sync) + `patches/0001`–`0002`; built with `patches/0003` |
+| Zano source version | 2.2.3.601 (`9adfb6b0` on `release_compact`, untagged; HF7 + rollback to 3,833,000 + compact sync) + `patches/0001`, `0002`, `0004`, `0005`; built with `patches/0003` |
 | Native asset ID | `d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a` |
 | Decimal places | 12 |
 | Block time | ~60 seconds |

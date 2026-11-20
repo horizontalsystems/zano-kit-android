@@ -6,11 +6,22 @@ import org.junit.Test
 
 class TransferErrorTest {
 
-    // The texts are what the wallet engine returns: an error code, the exception with its
-    // source location, then the message with the daemon call that failed.
+    // The texts are what the wallet engine returns with patches/0005: an error code, the
+    // exception with its source location, then the message with the daemon call that failed.
     private fun noConnection(request: String) =
-        "WALLET_RPC_ERROR_CODE_GENERIC_TRANSFER_ERROR: [N5tools5error23no_connection_to_daemonE] " +
+        "WALLET_RPC_ERROR_CODE_GENERIC_ERROR: [N5tools5error23no_connection_to_daemonE] " +
             "Zano/src/wallet/wallet2.cpp:7310\n  no connection to daemon, request = $request"
+
+    // An engine without patches/0005 names no call, for a failed decoy request and for an
+    // unanswered broadcast alike. Seen on a device with the 2.2.3.601 libraries.
+    private val noConnectionWithoutACall =
+        "WALLET_RPC_ERROR_CODE_GENERIC_ERROR: [N5tools5error23no_connection_to_daemonE] " +
+            "Zano/src/wallet/wallet2.cpp:7310\n  no connection to daemon"
+
+    @Test
+    fun errorThatNamesNoCallIsUnconfirmed() {
+        assertTrue(parseTransferError(noConnectionWithoutACall) is BroadcastUnconfirmedException)
+    }
 
     @Test
     fun callThatFailsBeforeTheBroadcastIsAnUnreachableNode() {

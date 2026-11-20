@@ -202,9 +202,10 @@ private val noConnectionPattern = Regex("no connection to daemon", RegexOption.I
 // The daemon answered that it is busy, so it did not take the transaction
 private val daemonBusyPattern = Regex("DAEMON_IS_BUSY", RegexOption.IGNORE_CASE)
 
-// The wallet names the daemon call that got no answer. These are the calls that only read from
-// the daemon, and the daemon's own answer that it is offline: none of them hands it the
-// transaction.
+// The wallet names the daemon call that got no answer (with patches/0005; an engine without it
+// names none, and every such failure then reads as an unanswered broadcast). These are the calls
+// that only read from the daemon, and the daemon's own answer that it is offline: none of them
+// hands it the transaction.
 private val readCallUnansweredPattern = Regex(
     "no connection to daemon,\\s*request\\s*=\\s*(?:getrandom_outs\\d*\\.bin|get_o_indexes\\.bin|getblocks\\.bin|" +
         "get_blocks_details|get_tx_pool|Transfer attempt while daemon offline)\\s*$",
