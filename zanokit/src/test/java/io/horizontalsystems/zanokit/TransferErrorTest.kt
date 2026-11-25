@@ -1,5 +1,7 @@
 package io.horizontalsystems.zanokit
 
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -89,5 +91,55 @@ class TransferErrorTest {
     @Test
     fun errorWithoutATextIsAFailedSend() {
         assertTrue(parseTransferError(null) is SendFailedException)
+    }
+
+    // The engine's answer to a transfer request
+
+    private fun <T : Throwable> failure(type: Class<T>, raw: String?): T = try {
+        parseTransferResponse(raw)
+        throw AssertionError("no error for: $raw")
+    } catch (e: ZanoException) {
+        assertTrue("${e.javaClass.simpleName} for: $raw", type.isInstance(e))
+        type.cast(e)!!
+    }
+
+    @Test
+    fun answerWithAHashIsTheTransfer() {
+        assertEquals("abc123", parseTransferResponse("""{"id":0,"jsonrpc":"2.0","result":{"tx_hash":"abc123","tx_size":1500}}"""))
+    }
+
+    // An error object with code 0 is not an error
+    @Test
+    fun emptyErrorNextToAHashIsStillTheTransfer() {
+        assertEquals("abc123", parseTransferResponse("""{"error":{"code":0,"message":""},"result":{"tx_hash":"abc123"}}"""))
+    }
+
+    @Test
+    fun answerWithAnErrorIsThatError() {
+        val notEnough = """{"error":{"code":-4,"message":"WALLET_RPC_ERROR_CODE_GENERIC_ERROR: not enough money"}}"""
+        failure(InsufficientFundsException::class.java, notEnough)
+
+        val unreachable = JSONObject().put("error", JSONObject().put("code", -4).put("message", noConnection("getrandom_outs4.bin")))
+        failure(NodeUnreachableException::class.java, unreachable.toString())
+    }
+
+    // The engine's own errors carry a text code and no result
+    @Test
+    fun errorWithATextCodeIsThatError() {
+        val error = failure(SendFailedException::class.java, """{"error":{"code":"INTERNAL_ERROR","message":"wallet is busy"}}""")
+        assertEquals("wallet is busy", error.message)
+    }
+
+    // The broadcast comes before the answer is put together, so an answer that says nothing
+    // must not read as a failed send
+    @Test
+    fun answerThatSaysNothingIsUnconfirmed() {
+        failure(BroadcastUnconfirmedException::class.java, null)
+        failure(BroadcastUnconfirmedException::class.java, "")
+        failure(BroadcastUnconfirmedException::class.java, "<html>502 Bad Gateway</html>")
+        failure(BroadcastUnconfirmedException::class.java, """{"id":0,"jsonrpc":"2.0"}""")
+        failure(BroadcastUnconfirmedException::class.java, """{"result":{"tx_size":1500}}""")
+        failure(BroadcastUnconfirmedException::class.java, """{"result":{"tx_hash":""}}""")
+        failure(BroadcastUnconfirmedException::class.java, """{"error":{"code":0,"message":""},"result":{}}""")
     }
 }

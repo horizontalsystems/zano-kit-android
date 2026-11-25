@@ -70,14 +70,7 @@ class ZanoWalletApi(private val walletId: Long) {
             put("params", paramsObj)
         }
         val raw = synchronized(nativeLock) { ZanoNative.invoke(walletId, request.toString()) }
-            ?: throw BroadcastUnconfirmedException("transfer: null response")
-        val result = parseResult(raw) ?: run {
-            val errorMsg = try {
-                JSONObject(raw).optJSONObject("error")?.optString("message")
-            } catch (_: Exception) { null }
-            throw parseTransferError(errorMsg)
-        }
-        return result.getString("tx_hash")
+        return parseTransferResponse(raw)
     }
 
     fun store() {
@@ -211,6 +204,34 @@ private val readCallUnansweredPattern = Regex(
         "get_blocks_details|get_tx_pool|Transfer attempt while daemon offline)\\s*$",
     RegexOption.IGNORE_CASE,
 )
+
+/**
+ * The hash of the transfer in the engine's answer to a transfer request.
+ *
+ * Only an answer that carries an error says the transfer failed. One that is missing, cannot be
+ * read or has no hash says nothing about the broadcast, which may have happened before the
+ * answer was put together: it is reported as unconfirmed, never as a failure to send again.
+ */
+internal fun parseTransferResponse(raw: String?): String {
+    if (raw == null) throw BroadcastUnconfirmedException("transfer: null response")
+
+    val json = try {
+        JSONObject(raw)
+    } catch (_: Exception) {
+        throw BroadcastUnconfirmedException("transfer: unreadable response")
+    }
+
+    val error = json.optJSONObject("error")
+    val result = json.optJSONObject("result")
+    // The engine's own errors carry a text code, which reads as 0, and come without a result
+    if (error != null && (error.optInt("code", 0) != 0 || result == null)) {
+        throw parseTransferError(error.optString("message"))
+    }
+
+    val hash = result?.optString("tx_hash").orEmpty()
+    if (hash.isEmpty()) throw BroadcastUnconfirmedException("transfer: no hash in the response")
+    return hash
+}
 
 internal fun parseTransferError(message: String?): ZanoException {
     if (message == null) return SendFailedException(null)
