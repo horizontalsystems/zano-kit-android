@@ -343,8 +343,13 @@ sync thread was in a request touched the same string and connection from two thr
   after a change go to the new daemon.
 
 Checked on an arm64 emulator: 17 changes about 0.7 s apart during sync, same process, no crash.
-A change still takes effect late when a wallet call is waiting on a hanging daemon, because the
-kit's `nativeLock` is held for that call and `resetConnectionUrl` queues behind it (10 s seen).
+A change still takes effect late when the engine's sync thread is waiting on a daemon that accepts
+the connection and never answers: 10 to 11 s seen. The wait is in the engine.
+`wallets_manager::set_remote_node_url` reaches each open wallet through its `locked_object`, so it
+takes the wallet lock, which the sync thread holds for the whole request (two attempts of 5 s
+here). The kit's `nativeLock` is not the cause: taking `resetConnectionUrl` out of it was tried and
+changed nothing. A daemon that refuses, errors or cannot be reached fails fast and shows no such
+wait. Closing it would need a patch that updates a wallet's connection without the wallet lock.
 
 ---
 
