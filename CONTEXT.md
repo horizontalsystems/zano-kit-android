@@ -107,6 +107,7 @@ git am ~/StudioProjects/zano-kit-android/patches/0002-Increase-plain_wallet-RPC-
 git am ~/StudioProjects/zano-kit-android/patches/0004-Route-daemon-connections-through-an-optional-SOCKS5-.patch
 git am ~/StudioProjects/zano-kit-android/patches/0005-Name-the-daemon-call-in-a-no-connection-transfer-er.patch
 git am ~/StudioProjects/zano-kit-android/patches/0006-Hand-the-transaction-to-the-caller-when-its-broadca.patch
+git am ~/StudioProjects/zano-kit-android/patches/0007-Change-the-daemon-address-without-racing-a-request.patch
 
 # Build-system patch (applies to zano_native_lib itself, not the Zano submodule):
 cd ~/zano_native_lib
@@ -195,7 +196,7 @@ hash string alone, while the lib holding the actual fix may show up on a single 
 
 ## Patches
 
-All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004`/`0005`/`0006` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
+All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004`/`0005`/`0006`/`0007` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
 
 ### `0001-Add-generate_address-and-generate_address_from_deriv.patch`
 
@@ -327,6 +328,23 @@ is sent directly when the proxy does not answer.
 
 The engine's log line for the error contains the signed transaction as hex. It is the public
 transaction, not key material.
+
+### `0007-Change-the-daemon-address-without-racing-a-request.patch`
+
+The kit changes the wallet's daemon with the wallet open (`ZanoKit.setDaemonAddress`, through the
+engine's `reset_connection_url`). `default_http_core_proxy::set_connection_addr` wrote the address
+and dropped the connection without the lock every request holds, so a change while the engine's
+sync thread was in a request touched the same string and connection from two threads.
+
+- **`src/wallet/core_default_rpc_proxy.h` / `.cpp`** — `set_connection_addr` only records the new
+  address under a small lock of its own. The request threads take it over with the request lock
+  held (`apply_pending_connection_addr`): before every attempt in `call_request` and in
+  `check_connection`. The caller does not wait for a request in flight, and the attempts left
+  after a change go to the new daemon.
+
+Checked on an arm64 emulator: 17 changes about 0.7 s apart during sync, same process, no crash.
+A change still takes effect late when a wallet call is waiting on a hanging daemon, because the
+kit's `nativeLock` is held for that call and `resetConnectionUrl` queues behind it (10 s seen).
 
 ---
 
@@ -467,7 +485,7 @@ filesDir/ZanoKit/{walletId}/network_{0|1}/
 
 | | |
 |-|-|
-| Zano source version | 2.2.3.601 (`9adfb6b0` on `release_compact`, untagged; HF7 + rollback to 3,833,000 + compact sync) + `patches/0001`, `0002`, `0004`, `0005`, `0006`; built with `patches/0003` |
+| Zano source version | 2.2.3.601 (`9adfb6b0` on `release_compact`, untagged; HF7 + rollback to 3,833,000 + compact sync) + `patches/0001`, `0002`, `0004`, `0005`, `0006`, `0007`; built with `patches/0003` |
 | Native asset ID | `d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a` |
 | Decimal places | 12 |
 | Block time | ~60 seconds |
