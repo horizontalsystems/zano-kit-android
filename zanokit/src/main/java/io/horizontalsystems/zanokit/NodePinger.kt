@@ -10,16 +10,19 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.Proxy
 import java.util.concurrent.TimeUnit
 
 /**
  * Asks daemons for their state with getinfo, all at once. Needs no wallet. The requests go
  * through the JVM's proxy settings, the same ones the engine is given for Tor.
  */
-internal class NodePinger(timeoutMs: Long = TIMEOUT_MS) {
+internal class NodePinger(proxy: Proxy? = null, timeoutMs: Long = TIMEOUT_MS) {
 
     private val client by lazy {
         OkHttpClient.Builder()
+            // A proxy given here is the only way out; without one the JVM's settings decide
+            .apply { if (proxy != null) proxy(proxy) }
             .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
             .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
             // A hard limit for the whole request, so a daemon that answers slowly enough to

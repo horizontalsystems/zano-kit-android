@@ -105,6 +105,9 @@ cd ~/zano_native_lib/Zano
 git am ~/StudioProjects/zano-kit-android/patches/0001-Add-generate_address-and-generate_address_from_deriv.patch
 git am ~/StudioProjects/zano-kit-android/patches/0002-Increase-plain_wallet-RPC-timeout-to-20s-with-3-atte.patch
 git am ~/StudioProjects/zano-kit-android/patches/0004-Route-daemon-connections-through-an-optional-SOCKS5-.patch
+git am ~/StudioProjects/zano-kit-android/patches/0005-Name-the-daemon-call-in-a-no-connection-transfer-er.patch
+git am ~/StudioProjects/zano-kit-android/patches/0006-Hand-the-transaction-to-the-caller-when-its-broadca.patch
+git am ~/StudioProjects/zano-kit-android/patches/0007-Change-the-daemon-address-without-racing-a-request.patch
 
 # Build-system patch (applies to zano_native_lib itself, not the Zano submodule):
 cd ~/zano_native_lib
@@ -193,7 +196,7 @@ hash string alone, while the lib holding the actual fix may show up on a single 
 
 ## Patches
 
-All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
+All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004`/`0005`/`0006`/`0007` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
 
 ### `0001-Add-generate_address-and-generate_address_from_deriv.patch`
 
@@ -283,6 +286,70 @@ not sync over Tor.
   empty host connects directly again. The kit calls it through `ZanoWalletApi.setSocksProxy`
   with the JVM `socksProxyHost`/`socksProxyPort` on every `ZanoCore` start. Copy the patched
   `plain_wallet_api.h` into `external-libs/include/` (Step 5).
+
+### `0005-Name-the-daemon-call-in-a-no-connection-transfer-er.patch`
+
+A transfer that fails with `no_connection_to_daemon` answered with `e.what()`. That text is built
+by the base class's `to_string()`, which is not virtual, so it drops the request: the kit got
+`[type] wallet2.cpp:<line>` and `no connection to daemon`, the same whether the decoy request or
+the broadcast itself went unanswered. Only the engine's log line named the call.
+
+- **`src/wallet/wallet_rpc_server.cpp`** — `WALLET_RPC_CATCH_TRY_ENTRY` catches
+  `no_connection_to_daemon` and answers with `e.to_string()`, which ends in
+  `, request = <call>`.
+
+`parseTransferError` in `ZanoWalletApi.kt` depends on it: a call that only reads from the daemon
+is `NodeUnreachableException` (nothing was sent, sending again is safe), any other text is
+`BroadcastUnconfirmedException`. Without this patch every such failure reads as unconfirmed.
+That is safe, but a send that failed before the broadcast then ends in the caller's "may have
+been sent" handling. After an engine update, check on a device that a refused
+`getrandom_outs4.bin` still comes back as `NodeUnreachableException`.
+
+### `0006-Hand-the-transaction-to-the-caller-when-its-broadca.patch`
+
+When `sendrawtransaction` got no answer, the error named the call and nothing else. The daemon
+may have taken the transaction, and the kit could only search the wallet's history by amount.
+
+- **`src/wallet/wallet2.cpp`** — `send_transaction_to_network` puts the transaction into the
+  error of an unanswered broadcast: `, request = sendrawtransaction, tx_id = <id>, tx_blob = <hex>`.
+- **`src/wallet/wallet_rpc_server.cpp`** — `WALLET_RPC_CATCH_TRY_ENTRY` catches `tx_rejected` and
+  answers with the daemon's status and the id: `..., status = <status>, tx_id = <id>`.
+
+`parseTransferError` reads both into a `SignedTransfer`, and `ZanoCore.send` settles it with
+`TransferDelivery`: the same bytes are handed to each daemon in turn and each is asked for the id
+(`get_tx_details`, which looks in the chain and in the pool). One daemon that took it or has it
+makes the send a success. The same bytes cannot pay twice. Without this patch the errors carry no
+transaction and such a send ends as `BroadcastUnconfirmedException`, which is safe.
+
+These calls are made by the kit over HTTP (`DaemonRpc`), not by the engine. They go through the
+SOCKS proxy the engine was started with (`jvmSocksProxy`), set on the client itself, with the
+daemon's name left for the proxy to resolve. `TransferDeliveryTest` checks both, and that nothing
+is sent directly when the proxy does not answer.
+
+The engine's log line for the error contains the signed transaction as hex. It is the public
+transaction, not key material.
+
+### `0007-Change-the-daemon-address-without-racing-a-request.patch`
+
+The kit changes the wallet's daemon with the wallet open (`ZanoKit.setDaemonAddress`, through the
+engine's `reset_connection_url`). `default_http_core_proxy::set_connection_addr` wrote the address
+and dropped the connection without the lock every request holds, so a change while the engine's
+sync thread was in a request touched the same string and connection from two threads.
+
+- **`src/wallet/core_default_rpc_proxy.h` / `.cpp`** — `set_connection_addr` only records the new
+  address under a small lock of its own. The request threads take it over with the request lock
+  held (`apply_pending_connection_addr`): before every attempt in `call_request` and in
+  `check_connection`. The caller does not wait for a request in flight, and the attempts left
+  after a change go to the new daemon.
+
+Checked on an arm64 emulator: 17 changes about 0.7 s apart during sync, same process, no crash.
+A change still takes effect late when the engine's sync thread is waiting on a daemon that accepts
+the connection and never answers: 10 to 11 s seen. The wait is in the engine.
+`wallets_manager::set_remote_node_url` reaches each open wallet through its `locked_object`, so it
+takes the wallet lock, which the sync thread holds for the whole request (two attempts of 5 s
+here). The kit's `nativeLock` is not the cause: taking `resetConnectionUrl` out of it was tried and
+changed nothing. A daemon that refuses, errors or cannot be reached fails fast and shows no such
+wait. Closing it would need a patch that updates a wallet's connection without the wallet lock.
 
 ---
 
@@ -423,7 +490,7 @@ filesDir/ZanoKit/{walletId}/network_{0|1}/
 
 | | |
 |-|-|
-| Zano source version | 2.2.3.601 (`9adfb6b0` on `release_compact`, untagged; HF7 + rollback to 3,833,000 + compact sync) + `patches/0001`–`0002`; built with `patches/0003` |
+| Zano source version | 2.2.3.601 (`9adfb6b0` on `release_compact`, untagged; HF7 + rollback to 3,833,000 + compact sync) + `patches/0001`, `0002`, `0004`, `0005`, `0006`, `0007`; built with `patches/0003` |
 | Native asset ID | `d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a` |
 | Decimal places | 12 |
 | Block time | ~60 seconds |

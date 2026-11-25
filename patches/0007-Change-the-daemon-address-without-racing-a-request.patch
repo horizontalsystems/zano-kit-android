@@ -1,0 +1,109 @@
+From 1ec66b0daa65cdb28338eff8d9dfd51589892230 Mon Sep 17 00:00:00 2001
+From: chyngyz <chyngyz.omurov@gmail.com>
+Date: Wed, 25 Nov 2026 17:29:31 +0600
+Subject: [PATCH] PATCH:0007 Change the daemon address without racing a request
+ in flight
+
+set_connection_addr() wrote the address and dropped the connection
+without the lock every request holds, so an address change while a
+request was running on another thread touched the same string and the
+same connection from two threads.
+
+The new address is now only recorded, under a small lock of its own, and
+the request threads take it over with the request lock held: before
+every attempt and before a connection check. The caller does not wait
+for a request in flight, and the attempts left after a change go to the
+new daemon.
+---
+ src/wallet/core_default_rpc_proxy.cpp | 20 +++++++++++++++++++-
+ src/wallet/core_default_rpc_proxy.h   | 14 +++++++++++++-
+ 2 files changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/src/wallet/core_default_rpc_proxy.cpp b/src/wallet/core_default_rpc_proxy.cpp
+index 7ca31a6a..f304d6e9 100644
+--- a/src/wallet/core_default_rpc_proxy.cpp
++++ b/src/wallet/core_default_rpc_proxy.cpp
+@@ -20,13 +20,30 @@ namespace tools
+ {
+   bool default_http_core_proxy::set_connection_addr(const std::string& url)
+   {
++    // Called from any thread, also while a request is running on another one. The address and
++    // the connection belong to the request threads, so the new address is only left for them.
++    std::lock_guard<std::mutex> lock(m_pending_addr_lock);
++    m_pending_addr = url;
++    m_has_pending_addr = true;
++    return true;
++  }
++  //------------------------------------------------------------------------------------------------------------------------------
++  void default_http_core_proxy::apply_pending_connection_addr()
++  {
++    std::string url;
++    {
++      std::lock_guard<std::mutex> lock(m_pending_addr_lock);
++      if (!m_has_pending_addr)
++        return;
++      url = m_pending_addr;
++      m_has_pending_addr = false;
++    }
+     if (m_daemon_address != url)
+     {
+       m_daemon_address = url;
+       m_http_client.disconnect();
+       this->set_incompatible_server_flag(false);
+     }
+-    return true;
+   }
+   //------------------------------------------------------------------------------------------------------------------------------
+   bool default_http_core_proxy::call_COMMAND_RPC_GET_TX_GLOBAL_OUTPUTS_INDEXES(const currency::COMMAND_RPC_GET_TX_GLOBAL_OUTPUTS_INDEXES::request& req, currency::COMMAND_RPC_GET_TX_GLOBAL_OUTPUTS_INDEXES::response& res)
+@@ -164,6 +181,7 @@ namespace tools
+   bool default_http_core_proxy::check_connection()
+   {
+     CRITICAL_REGION_LOCAL(m_lock);
++    apply_pending_connection_addr();
+     if (m_http_client.is_connected())
+       return true;
+ 
+diff --git a/src/wallet/core_default_rpc_proxy.h b/src/wallet/core_default_rpc_proxy.h
+index 7c15c82a..12131f8d 100644
+--- a/src/wallet/core_default_rpc_proxy.h
++++ b/src/wallet/core_default_rpc_proxy.h
+@@ -6,6 +6,7 @@
+ 
+ 
+ #pragma once
++#include <mutex>
+ #include "include_base_utils.h"
+ #include "net/http_client.h"
+ #include "i_core_rpc_proxy.h"
+@@ -85,6 +86,8 @@ namespace tools
+       bool ret = false;
+       for(size_t i = m_attempts_count; i && !ret; --i)
+       {
++        // before every attempt, so the ones left after a change go to the new daemon
++        apply_pending_connection_addr();
+         ret = request();
+       }
+ 
+@@ -136,9 +139,18 @@ namespace tools
+       return m_pdiganostic_info->last_success_interract_time;
+     }
+ 
++    // Takes over an address set by set_connection_addr(). Call with m_lock held.
++    void apply_pending_connection_addr();
++
+     epee::critical_section m_lock;
+     epee::net_utils::http::http_universal_client m_http_client;
+-    std::string m_daemon_address;
++    std::string m_daemon_address;  // only read and written with m_lock held
++
++    // An address set while a request may be running. The request threads take it over
++    // themselves, so the caller never waits for a request and never touches the connection.
++    std::mutex m_pending_addr_lock;
++    std::string m_pending_addr;
++    bool m_has_pending_addr = false;
+ 
+     unsigned int m_connection_timeout;
+     size_t m_attempts_count;
+-- 
+2.50.1 (Apple Git-155)
+

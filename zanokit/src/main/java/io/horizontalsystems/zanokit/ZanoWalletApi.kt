@@ -70,14 +70,7 @@ class ZanoWalletApi(private val walletId: Long) {
             put("params", paramsObj)
         }
         val raw = synchronized(nativeLock) { ZanoNative.invoke(walletId, request.toString()) }
-            ?: throw ZanoException("transfer: null response")
-        val result = parseResult(raw) ?: run {
-            val errorMsg = try {
-                JSONObject(raw).optJSONObject("error")?.optString("message")
-            } catch (_: Exception) { null }
-            throw parseTransferError(errorMsg)
-        }
-        return result.getString("tx_hash")
+        return parseTransferResponse(raw)
     }
 
     fun store() {
@@ -117,6 +110,15 @@ class ZanoWalletApi(private val walletId: Long) {
 
         fun restoreWallet(seed: String, path: String, password: String, seedPassword: String): String? =
             synchronized(nativeLock) { ZanoNative.restoreWallet(seed, path, password, seedPassword) }
+
+        /**
+         * Points the engine at another daemon. Open wallets stay open and go on from the
+         * height they have. The connection in use is dropped; the next call opens a new one.
+         */
+        fun resetConnectionUrl(daemonAddress: String) {
+            val (host, port) = parseAddress(daemonAddress)
+            syncCall("reset_connection_url", 0, "$host:$port")
+        }
 
         fun syncCall(method: String, instanceId: Long, params: String): String? =
             synchronized(nativeLock) { ZanoNative.syncCall(method, instanceId, params) }
@@ -194,19 +196,105 @@ class ZanoWalletApi(private val walletId: Long) {
         return parseResponse(raw).getOrNull()
     }
 
-    private fun parseTransferError(message: String?): ZanoException {
-        if (message != null) {
-            val insufficientFundsPattern = Regex("NOT_ENOUGH_MONEY|not enough money|insufficient", RegexOption.IGNORE_CASE)
-            if (insufficientFundsPattern.containsMatchIn(message)) return InsufficientFundsException(message)
-            val nodeUnreachablePattern = Regex("no connection to daemon|DAEMON_IS_BUSY", RegexOption.IGNORE_CASE)
-            if (nodeUnreachablePattern.containsMatchIn(message)) return NodeUnreachableException(message)
-        }
-        return SendFailedException(message)
-    }
 }
 
-open class ZanoException(message: String?) : Exception(message)
-class InsufficientFundsException(message: String?) : ZanoException(message)
-// The node RPC failed or timed out mid-send (before broadcast) — retryable.
-class NodeUnreachableException(message: String?) : ZanoException(message)
-class SendFailedException(message: String?) : ZanoException(message)
+private val insufficientFundsPattern = Regex("NOT_ENOUGH_MONEY|not enough money|insufficient", RegexOption.IGNORE_CASE)
+private val noConnectionPattern = Regex("no connection to daemon", RegexOption.IGNORE_CASE)
+
+// The daemon answered that it is busy, so it did not take the transaction
+private val daemonBusyPattern = Regex("DAEMON_IS_BUSY", RegexOption.IGNORE_CASE)
+
+// The wallet names the daemon call that got no answer (with patches/0005; an engine without it
+// names none, and every such failure then reads as an unanswered broadcast). These are the calls
+// that only read from the daemon, and the daemon's own answer that it is offline: none of them
+// hands it the transaction.
+private val readCallUnansweredPattern = Regex(
+    "no connection to daemon,\\s*request\\s*=\\s*(?:getrandom_outs\\d*\\.bin|get_o_indexes\\.bin|getblocks\\.bin|" +
+        "get_blocks_details|get_tx_pool|Transfer attempt while daemon offline)\\s*$",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * The hash of the transfer in the engine's answer to a transfer request.
+ *
+ * Only an answer that carries an error says the transfer failed. One that is missing, cannot be
+ * read or has no hash says nothing about the broadcast, which may have happened before the
+ * answer was put together: it is reported as unconfirmed, never as a failure to send again.
+ */
+internal fun parseTransferResponse(raw: String?): String {
+    if (raw == null) throw BroadcastUnconfirmedException("transfer: null response")
+
+    val json = try {
+        JSONObject(raw)
+    } catch (_: Exception) {
+        throw BroadcastUnconfirmedException("transfer: unreadable response")
+    }
+
+    val error = json.optJSONObject("error")
+    val result = json.optJSONObject("result")
+    // The engine's own errors carry a text code, which reads as 0, and come without a result
+    if (error != null && (error.optInt("code", 0) != 0 || result == null)) {
+        throw parseTransferError(error.optString("message"))
+    }
+
+    val hash = result?.optString("tx_hash").orEmpty()
+    if (hash.isEmpty()) throw BroadcastUnconfirmedException("transfer: no hash in the response")
+    return hash
+}
+
+// With patches/0006 the engine adds the transaction to the error of a broadcast that got no
+// answer: its id and the signed bytes as hex
+private val unansweredTransferPattern = Regex(
+    "request\\s*=\\s*sendrawtransaction,\\s*tx_id\\s*=\\s*([0-9a-f]{64}),\\s*tx_blob\\s*=\\s*([0-9a-f]+)",
+    RegexOption.IGNORE_CASE,
+)
+
+// A transaction the daemon refused. The wallet tries the broadcast again when it gets no answer,
+// and a daemon that took the first try may refuse the repeat, which reads the same as a
+// transaction it never took. The engine names the transaction, so the daemons can be asked.
+private val rejectedTransferPattern = Regex(
+    "rejected by daemon,\\s*status\\s*=\\s*[^,]*,\\s*tx_id\\s*=\\s*([0-9a-f]{64})",
+    RegexOption.IGNORE_CASE,
+)
+
+internal fun parseTransferError(message: String?): ZanoException {
+    if (message == null) return SendFailedException(null)
+    if (insufficientFundsPattern.containsMatchIn(message)) return InsufficientFundsException(message)
+    if (readCallUnansweredPattern.containsMatchIn(message)) return NodeUnreachableException(message)
+    // Any other call without an answer is taken for the broadcast: "sendrawtransaction" today,
+    // and whatever a later wallet engine calls it. For the broadcast the wallet raises the same
+    // error as for the calls before it, although the daemon may have taken the transaction and
+    // only its answer was lost. A name this list does not know must not read as safe to repeat.
+    if (noConnectionPattern.containsMatchIn(message)) {
+        val match = unansweredTransferPattern.find(message)
+            ?: return BroadcastUnconfirmedException(message)
+        val (hash, blobHex) = match.destructured
+        // The bytes run to kilobytes and are of no use in a message
+        val text = message.substring(0, match.range.first) + "request = sendrawtransaction, tx_id = $hash"
+        return BroadcastUnconfirmedException(text, SignedTransfer(hash.lowercase(), blobHex))
+    }
+    if (daemonBusyPattern.containsMatchIn(message)) return NodeUnreachableException(message)
+
+    val rejected = rejectedTransferPattern.find(message)
+    return SendFailedException(message, rejected?.let { SignedTransfer(it.groupValues[1].lowercase(), blobHex = null) })
+}
+
+open class ZanoException internal constructor(
+    message: String?,
+    // The transfer a failed send left behind, when the engine named it: the daemons can be
+    // asked for it, and given it again
+    internal val transfer: SignedTransfer?,
+) : Exception(message) {
+    constructor(message: String?) : this(message, null)
+}
+internal class InsufficientFundsException(message: String?) : ZanoException(message)
+// A daemon call failed or timed out before the broadcast: nothing was sent, sending again is safe.
+internal class NodeUnreachableException(message: String?) : ZanoException(message)
+// The transaction was handed to the daemon and no answer came back, and no daemon the kit could
+// ask has it: it may still be in the network. Sending again can pay twice.
+internal class BroadcastUnconfirmedException(message: String?, transfer: SignedTransfer?) : ZanoException(message, transfer) {
+    constructor(message: String?) : this(message, null)
+}
+internal class SendFailedException(message: String?, transfer: SignedTransfer?) : ZanoException(message, transfer) {
+    constructor(message: String?) : this(message, null)
+}
