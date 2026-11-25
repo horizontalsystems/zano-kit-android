@@ -233,6 +233,21 @@ internal fun parseTransferResponse(raw: String?): String {
     return hash
 }
 
+// With patches/0006 the engine adds the transaction to the error of a broadcast that got no
+// answer: its id and the signed bytes as hex
+private val unansweredTransferPattern = Regex(
+    "request\\s*=\\s*sendrawtransaction,\\s*tx_id\\s*=\\s*([0-9a-f]{64}),\\s*tx_blob\\s*=\\s*([0-9a-f]+)",
+    RegexOption.IGNORE_CASE,
+)
+
+// A transaction the daemon refused. The wallet tries the broadcast again when it gets no answer,
+// and a daemon that took the first try may refuse the repeat, which reads the same as a
+// transaction it never took. The engine names the transaction, so the daemons can be asked.
+private val rejectedTransferPattern = Regex(
+    "rejected by daemon,\\s*status\\s*=\\s*[^,]*,\\s*tx_id\\s*=\\s*([0-9a-f]{64})",
+    RegexOption.IGNORE_CASE,
+)
+
 internal fun parseTransferError(message: String?): ZanoException {
     if (message == null) return SendFailedException(null)
     if (insufficientFundsPattern.containsMatchIn(message)) return InsufficientFundsException(message)
@@ -241,24 +256,36 @@ internal fun parseTransferError(message: String?): ZanoException {
     // and whatever a later wallet engine calls it. For the broadcast the wallet raises the same
     // error as for the calls before it, although the daemon may have taken the transaction and
     // only its answer was lost. A name this list does not know must not read as safe to repeat.
-    if (noConnectionPattern.containsMatchIn(message)) return BroadcastUnconfirmedException(message)
+    if (noConnectionPattern.containsMatchIn(message)) {
+        val match = unansweredTransferPattern.find(message)
+            ?: return BroadcastUnconfirmedException(message)
+        val (hash, blobHex) = match.destructured
+        // The bytes run to kilobytes and are of no use in a message
+        val text = message.substring(0, match.range.first) + "request = sendrawtransaction, tx_id = $hash"
+        return BroadcastUnconfirmedException(text, SignedTransfer(hash.lowercase(), blobHex))
+    }
     if (daemonBusyPattern.containsMatchIn(message)) return NodeUnreachableException(message)
-    return SendFailedException(message)
+
+    val rejected = rejectedTransferPattern.find(message)
+    return SendFailedException(message, rejected?.let { SignedTransfer(it.groupValues[1].lowercase(), blobHex = null) })
 }
 
-// The wallet tries the broadcast again when it gets no answer. A daemon that took the first try
-// rejects the repeat, which reads the same as a transaction it refused.
-private val rejectedByDaemonPattern = Regex("rejected by daemon", RegexOption.IGNORE_CASE)
-
-internal val ZanoException.mayHaveBeenSent: Boolean
-    get() = this is BroadcastUnconfirmedException ||
-        (this is SendFailedException && message?.let { rejectedByDaemonPattern.containsMatchIn(it) } == true)
-
-open class ZanoException(message: String?) : Exception(message)
+open class ZanoException internal constructor(
+    message: String?,
+    // The transfer a failed send left behind, when the engine named it: the daemons can be
+    // asked for it, and given it again
+    internal val transfer: SignedTransfer?,
+) : Exception(message) {
+    constructor(message: String?) : this(message, null)
+}
 class InsufficientFundsException(message: String?) : ZanoException(message)
 // A daemon call failed or timed out before the broadcast: nothing was sent, sending again is safe.
 class NodeUnreachableException(message: String?) : ZanoException(message)
-// The transaction was handed to the daemon and no answer came back, and the wallet did not find
-// it in the daemon's pool afterwards: it may still be in the network. Sending again can pay twice.
-class BroadcastUnconfirmedException(message: String?) : ZanoException(message)
-class SendFailedException(message: String?) : ZanoException(message)
+// The transaction was handed to the daemon and no answer came back, and no daemon the kit could
+// ask has it: it may still be in the network. Sending again can pay twice.
+class BroadcastUnconfirmedException internal constructor(message: String?, transfer: SignedTransfer?) : ZanoException(message, transfer) {
+    constructor(message: String?) : this(message, null)
+}
+class SendFailedException internal constructor(message: String?, transfer: SignedTransfer?) : ZanoException(message, transfer) {
+    constructor(message: String?) : this(message, null)
+}

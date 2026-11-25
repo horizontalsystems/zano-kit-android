@@ -1,5 +1,7 @@
 package io.horizontalsystems.zanokit
 
+import java.net.InetSocketAddress
+import java.net.Proxy
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
@@ -28,6 +30,8 @@ class ZanoCore(
     val networkType: NetworkType,
     private val storage: ZanoStorage,
     private val pinnedAssetIds: List<String> = emptyList(),
+    // Other daemons a transfer may be handed to when this one does not answer its broadcast
+    private val fallbackDaemonAddresses: () -> List<String> = { emptyList() },
 ) {
     // Recreated on every start so the kit can be stopped and started again.
     // The handler keeps uncaught exceptions in background polls from crashing
@@ -41,6 +45,10 @@ class ZanoCore(
     )
 
     private var nativeWalletId: Long = -1
+
+    // What the engine was given at the last start; the kit's own daemon calls go the same way
+    @Volatile
+    private var socksProxy: Proxy = Proxy.NO_PROXY
     private var _restoreHeight: Long = 0L
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var walletAddress: String = ""
@@ -101,18 +109,10 @@ class ZanoCore(
 
         // The engine connects to the daemon from native code, so the JVM proxy settings an
         // embedded Tor installs only reach it through here, applied again on every start
-        val proxyHost = System.getProperty("socksProxyHost") ?: ""
-        var proxyPort = 0
-        if (proxyHost.isNotEmpty()) {
-            // Same default as the JVM's own SOCKS sockets when only the host is set
-            val rawPort = System.getProperty("socksProxyPort")
-            proxyPort = if (rawPort == null) 1080 else rawPort.toIntOrNull() ?: -1
-            // Fail rather than connect in a way that differs from what the JVM proxy settings ask for
-            if (proxyPort !in 1..65535) {
-                throw ZanoException("Invalid SOCKS proxy port: $rawPort")
-            }
-        }
-        ZanoWalletApi.setSocksProxy(proxyHost, proxyPort)
+        val proxy = jvmSocksProxy()
+        val proxyAddress = proxy.address() as? InetSocketAddress
+        ZanoWalletApi.setSocksProxy(proxyAddress?.hostString.orEmpty(), proxyAddress?.port ?: 0)
+        socksProxy = proxy
         ZanoWalletApi.init(host, port, workingDir, 0)
 
         // restore_from_derivations prepends workingDir/wallets/ internally, so BIP39 wallets
@@ -447,22 +447,28 @@ class ZanoCore(
 
     // Submits a transfer and caches the sent info for tx enrichment on next poll
     suspend fun send(toAddress: String, assetId: String, amount: Long, fee: Long, memo: String?): String {
-        val lookup = SentTransferLookup({ api.getRecentTransactions(count = SentTransferLookup.LIST_SIZE) })
-        val knownBefore = lookup.knownHashes()
         val txHash = try {
             api.transfer(toAddress, assetId, amount, fee, comment = memo)
         } catch (error: ZanoException) {
             // The daemon may have taken the transaction although the wallet was told it failed:
-            // its answer was lost, or it rejected a repeat of a broadcast it already had.
-            // Reporting that as a failure invites sending again, which would pay twice.
-            if (!error.mayHaveBeenSent) throw error
-            val toSelf = walletAddress.isNotEmpty() && toAddress == walletAddress
-            lookup.find(knownBefore, assetId, amount, fee, toSelf) ?: throw error
+            // its answer was lost, or it refused a repeat of a broadcast it already had.
+            // Reporting that as a failure invites sending again, which would pay twice. The
+            // engine names the transaction, so it is settled with the daemons directly.
+            val transfer = error.transfer ?: throw error
+            if (!transferDelivery().deliver(transfer)) throw error
+            transfer.hash
         }
         storage.saveSentTransfer(txHash, assetId, amount, toAddress)
         refresh()
         return txHash
     }
+
+    // The other daemons first: the wallet's own has just failed to answer, and a transaction any
+    // daemon takes reaches the rest of the network. Through the proxy the engine was started with.
+    private fun transferDelivery() = TransferDelivery(
+        DaemonRpc(socksProxy),
+        (fallbackDaemonAddresses() - daemonAddress) + daemonAddress,
+    )
 
     fun getBalance(assetId: String): BalanceInfo? = storage.getBalance(assetId)
 

@@ -49,6 +49,7 @@ class ZanoKit private constructor(
             daemonAddress: String,
             networkType: NetworkType = NetworkType.MainNet,
             pinnedAssetIds: List<String>? = null,
+            fallbackDaemonAddresses: () -> List<String> = { emptyList() },
         ): ZanoKit {
             val db = ZanoDatabase.build(context, "Zano-${networkType.name}-${walletId}")
             val storage = ZanoStorage(db)
@@ -57,7 +58,7 @@ class ZanoKit private constructor(
             val pinned = pinnedAssetIds
                 ?: if (networkType == NetworkType.MainNet) GLOBAL_WHITELIST_ASSET_IDS else emptyList()
 
-            val core = ZanoCore(context, wallet, walletId, daemonAddress, networkType, storage, pinned)
+            val core = ZanoCore(context, wallet, walletId, daemonAddress, networkType, storage, pinned, fallbackDaemonAddresses)
             return ZanoKit(core, storage, UUID.randomUUID().toString())
         }
 

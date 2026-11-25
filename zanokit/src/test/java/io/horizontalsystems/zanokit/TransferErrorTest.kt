@@ -3,6 +3,7 @@ package io.horizontalsystems.zanokit
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -76,16 +77,49 @@ class TransferErrorTest {
         assertTrue(parseTransferError("transaction was rejected by daemon with status: Failed") is SendFailedException)
     }
 
+    // With patches/0006 the engine hands over the transaction whose broadcast got no answer
     @Test
-    fun onlyAnUnansweredOrRejectedBroadcastMayHaveBeenSent() {
-        val rejected = "WALLET_RPC_ERROR_CODE_GENERIC_TRANSFER_ERROR: [N5tools5error11tx_rejectedE] " +
-            "Zano/src/wallet/wallet2.cpp:7620\n  transaction was rejected by daemon, status = Failed, tx: {}"
+    fun unansweredBroadcastCarriesTheTransaction() {
+        val hash = "e44e5e29" + "0".repeat(48) + "0000556d"
+        val blob = "04" + "ab01".repeat(2000)
+        val error = parseTransferError(noConnection("sendrawtransaction, tx_id = $hash, tx_blob = $blob"))
 
-        assertTrue(parseTransferError(noConnection("sendrawtransaction")).mayHaveBeenSent)
-        assertTrue(parseTransferError(rejected).mayHaveBeenSent)
-        assertFalse(parseTransferError(noConnection("getrandom_outs4.bin")).mayHaveBeenSent)
-        assertFalse(parseTransferError("WALLET_RPC_ERROR_CODE_NOT_ENOUGH_MONEY: not enough money").mayHaveBeenSent)
-        assertFalse(parseTransferError("BUSY").mayHaveBeenSent)
+        assertTrue(error is BroadcastUnconfirmedException)
+        assertEquals(hash, error.transfer?.hash)
+        assertEquals(blob, error.transfer?.blobHex)
+        // the bytes stay out of the text an app may show or log
+        assertTrue(error.message!!.endsWith("request = sendrawtransaction, tx_id = $hash"))
+        assertFalse(error.message!!.contains("ab01ab01"))
+    }
+
+    // A text cut short must not be taken for a whole transaction
+    @Test
+    fun unansweredBroadcastWithoutAWholeIdCarriesNothing() {
+        val error = parseTransferError(noConnection("sendrawtransaction, tx_id = e44e5e29, tx_blob = 04ab"))
+
+        assertTrue(error is BroadcastUnconfirmedException)
+        assertNull(error.transfer)
+    }
+
+    // The engine names a transaction the daemon refused, which may be a repeat of one it took
+    @Test
+    fun rejectedTransactionCarriesItsId() {
+        val hash = "72f18727" + "1".repeat(48) + "0000aece"
+        val rejected = "WALLET_RPC_ERROR_CODE_GENERIC_TRANSFER_ERROR: [N5tools5error11tx_rejectedE] " +
+            "Zano/src/wallet/wallet2.cpp:7626\n  transaction was rejected by daemon, status = Failed, tx_id = $hash"
+        val error = parseTransferError(rejected)
+
+        assertTrue(error is SendFailedException)
+        assertEquals(hash, error.transfer?.hash)
+        assertNull(error.transfer?.blobHex)
+    }
+
+    @Test
+    fun errorsFromBeforeTheBroadcastCarryNoTransaction() {
+        assertNull(parseTransferError(noConnection("getrandom_outs4.bin")).transfer)
+        assertNull(parseTransferError(noConnection("sendrawtransaction")).transfer)
+        assertNull(parseTransferError("WALLET_RPC_ERROR_CODE_NOT_ENOUGH_MONEY: not enough money").transfer)
+        assertNull(parseTransferError("transaction was rejected by daemon with status: Failed").transfer)
     }
 
     @Test
