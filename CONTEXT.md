@@ -106,6 +106,7 @@ git am ~/StudioProjects/zano-kit-android/patches/0001-Add-generate_address-and-g
 git am ~/StudioProjects/zano-kit-android/patches/0002-Increase-plain_wallet-RPC-timeout-to-20s-with-3-atte.patch
 git am ~/StudioProjects/zano-kit-android/patches/0004-Route-daemon-connections-through-an-optional-SOCKS5-.patch
 git am ~/StudioProjects/zano-kit-android/patches/0005-Name-the-daemon-call-in-a-no-connection-transfer-er.patch
+git am ~/StudioProjects/zano-kit-android/patches/0006-Hand-the-transaction-to-the-caller-when-its-broadca.patch
 
 # Build-system patch (applies to zano_native_lib itself, not the Zano submodule):
 cd ~/zano_native_lib
@@ -194,7 +195,7 @@ hash string alone, while the lib holding the actual fix may show up on a single 
 
 ## Patches
 
-All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004`/`0005` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
+All patches are in `patches/` and must be applied before building (Step 3): `0001`/`0002`/`0004`/`0005`/`0006` to the Zano source, `0003` to the `zano_native_lib` build system. The Zano patches are regenerated against each new Zano release (`git format-patch` after committing the changes onto the release tag).
 
 ### `0001-Add-generate_address-and-generate_address_from_deriv.patch`
 
@@ -302,6 +303,30 @@ is `NodeUnreachableException` (nothing was sent, sending again is safe), any oth
 That is safe, but a send that failed before the broadcast then ends in the caller's "may have
 been sent" handling. After an engine update, check on a device that a refused
 `getrandom_outs4.bin` still comes back as `NodeUnreachableException`.
+
+### `0006-Hand-the-transaction-to-the-caller-when-its-broadca.patch`
+
+When `sendrawtransaction` got no answer, the error named the call and nothing else. The daemon
+may have taken the transaction, and the kit could only search the wallet's history by amount.
+
+- **`src/wallet/wallet2.cpp`** — `send_transaction_to_network` puts the transaction into the
+  error of an unanswered broadcast: `, request = sendrawtransaction, tx_id = <id>, tx_blob = <hex>`.
+- **`src/wallet/wallet_rpc_server.cpp`** — `WALLET_RPC_CATCH_TRY_ENTRY` catches `tx_rejected` and
+  answers with the daemon's status and the id: `..., status = <status>, tx_id = <id>`.
+
+`parseTransferError` reads both into a `SignedTransfer`, and `ZanoCore.send` settles it with
+`TransferDelivery`: the same bytes are handed to each daemon in turn and each is asked for the id
+(`get_tx_details`, which looks in the chain and in the pool). One daemon that took it or has it
+makes the send a success. The same bytes cannot pay twice. Without this patch the errors carry no
+transaction and such a send ends as `BroadcastUnconfirmedException`, which is safe.
+
+These calls are made by the kit over HTTP (`DaemonRpc`), not by the engine. They go through the
+SOCKS proxy the engine was started with (`jvmSocksProxy`), set on the client itself, with the
+daemon's name left for the proxy to resolve. `TransferDeliveryTest` checks both, and that nothing
+is sent directly when the proxy does not answer.
+
+The engine's log line for the error contains the signed transaction as hex. It is the public
+transaction, not key material.
 
 ---
 
@@ -442,7 +467,7 @@ filesDir/ZanoKit/{walletId}/network_{0|1}/
 
 | | |
 |-|-|
-| Zano source version | 2.2.3.601 (`9adfb6b0` on `release_compact`, untagged; HF7 + rollback to 3,833,000 + compact sync) + `patches/0001`, `0002`, `0004`, `0005`; built with `patches/0003` |
+| Zano source version | 2.2.3.601 (`9adfb6b0` on `release_compact`, untagged; HF7 + rollback to 3,833,000 + compact sync) + `patches/0001`, `0002`, `0004`, `0005`, `0006`; built with `patches/0003` |
 | Native asset ID | `d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a` |
 | Decimal places | 12 |
 | Block time | ~60 seconds |

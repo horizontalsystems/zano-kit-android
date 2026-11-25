@@ -1,0 +1,63 @@
+From ee471b61fc21d09b1cd672267fdd45bbd7be71c6 Mon Sep 17 00:00:00 2001
+From: chyngyz <chyngyz.omurov@gmail.com>
+Date: Wed, 25 Nov 2026 16:09:17 +0600
+Subject: [PATCH] PATCH:0006 Hand the transaction to the caller when its
+ broadcast goes unanswered
+
+When sendrawtransaction got no answer the error named the call and
+nothing else, so the caller could not tell whether the daemon had taken
+the transaction, and could only search its own history by amount.
+
+The error now carries the transaction id and the signed transaction as
+hex after the call's name: ", request = sendrawtransaction, tx_id = <id>,
+tx_blob = <hex>". The caller can ask any daemon for the id and hand the
+same bytes to another daemon, which cannot pay twice.
+
+A transaction the daemon rejected is answered with the daemon's status
+and the transaction id, for the same lookup.
+---
+ src/wallet/wallet2.cpp           | 8 +++++++-
+ src/wallet/wallet_rpc_server.cpp | 8 ++++++++
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/wallet/wallet2.cpp b/src/wallet/wallet2.cpp
+index d23ba50d..4a13e734 100644
+--- a/src/wallet/wallet2.cpp
++++ b/src/wallet/wallet2.cpp
+@@ -7613,7 +7613,13 @@ void wallet2::send_transaction_to_network(const transaction& tx)
+   req.tx_as_hex = epee::string_tools::buff_to_hex_nodelimer(tx_to_blob(tx));
+   COMMAND_RPC_SEND_RAW_TX::response daemon_send_resp;
+   const bool r = m_core_proxy->call_COMMAND_RPC_SEND_RAW_TX(req, daemon_send_resp);
+-  THROW_IF_TRUE_WALLET_EX(!r, error::no_connection_to_daemon, "sendrawtransaction");
++  if (!r)
++  {
++    // The daemon may have taken the transaction and only its answer was lost. The caller gets the
++    // transaction itself, so it can ask any daemon for it by id and hand the same bytes to another one.
++    const std::string request = std::string("sendrawtransaction, tx_id = ") + epee::string_tools::pod_to_hex(get_transaction_hash(tx)) + ", tx_blob = " + req.tx_as_hex;
++    THROW_IF_TRUE_WALLET_EX(true, error::no_connection_to_daemon, request);
++  }
+   THROW_IF_TRUE_WALLET_EX(daemon_send_resp.status == API_RETURN_CODE_TX_FREEZE_PERIOD, error::tx_freeze_period, "sendrawtransaction");
+   THROW_IF_TRUE_WALLET_EX(daemon_send_resp.status == API_RETURN_CODE_BUSY, error::daemon_busy, "sendrawtransaction");
+   THROW_IF_TRUE_WALLET_EX(daemon_send_resp.status == API_RETURN_CODE_DISCONNECTED, error::no_connection_to_daemon, "Transfer attempt while daemon offline");
+diff --git a/src/wallet/wallet_rpc_server.cpp b/src/wallet/wallet_rpc_server.cpp
+index b3a58bae..c2a69e42 100644
+--- a/src/wallet/wallet_rpc_server.cpp
++++ b/src/wallet/wallet_rpc_server.cpp
+@@ -68,6 +68,14 @@ POP_VS_WARNINGS
+           er.message = std::string("WALLET_RPC_ERROR_CODE_GENERIC_ERROR: ") + e.to_string(); \
+           return false; \
+         } \
++        catch (const tools::error::tx_rejected& e) \
++        { \
++          /* what() names neither the daemon's status nor the transaction; to_string() dumps all of it */ \
++          er.code = WALLET_RPC_ERROR_CODE_GENERIC_TRANSFER_ERROR; \
++          er.message = std::string("WALLET_RPC_ERROR_CODE_GENERIC_TRANSFER_ERROR: ") + e.what() + ", status = " + e.status() + \
++            ", tx_id = " + epee::string_tools::pod_to_hex(currency::get_transaction_hash(e.tx())); \
++          return false; \
++        } \
+         catch (const tools::error::wallet_error& e) \
+         { \
+           er.code = WALLET_RPC_ERROR_CODE_GENERIC_TRANSFER_ERROR; \
+-- 
+2.50.1 (Apple Git-155)
+
