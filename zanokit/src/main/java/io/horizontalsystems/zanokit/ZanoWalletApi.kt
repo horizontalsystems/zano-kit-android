@@ -111,6 +111,15 @@ class ZanoWalletApi(private val walletId: Long) {
         fun restoreWallet(seed: String, path: String, password: String, seedPassword: String): String? =
             synchronized(nativeLock) { ZanoNative.restoreWallet(seed, path, password, seedPassword) }
 
+        /**
+         * Points the engine at another daemon. Open wallets stay open and go on from the
+         * height they have. The connection in use is dropped; the next call opens a new one.
+         */
+        fun resetConnectionUrl(daemonAddress: String) {
+            val (host, port) = parseAddress(daemonAddress)
+            syncCall("reset_connection_url", 0, "$host:$port")
+        }
+
         fun syncCall(method: String, instanceId: Long, params: String): String? =
             synchronized(nativeLock) { ZanoNative.syncCall(method, instanceId, params) }
 
@@ -278,14 +287,14 @@ open class ZanoException internal constructor(
 ) : Exception(message) {
     constructor(message: String?) : this(message, null)
 }
-class InsufficientFundsException(message: String?) : ZanoException(message)
+internal class InsufficientFundsException(message: String?) : ZanoException(message)
 // A daemon call failed or timed out before the broadcast: nothing was sent, sending again is safe.
-class NodeUnreachableException(message: String?) : ZanoException(message)
+internal class NodeUnreachableException(message: String?) : ZanoException(message)
 // The transaction was handed to the daemon and no answer came back, and no daemon the kit could
 // ask has it: it may still be in the network. Sending again can pay twice.
-class BroadcastUnconfirmedException internal constructor(message: String?, transfer: SignedTransfer?) : ZanoException(message, transfer) {
+internal class BroadcastUnconfirmedException(message: String?, transfer: SignedTransfer?) : ZanoException(message, transfer) {
     constructor(message: String?) : this(message, null)
 }
-class SendFailedException internal constructor(message: String?, transfer: SignedTransfer?) : ZanoException(message, transfer) {
+internal class SendFailedException(message: String?, transfer: SignedTransfer?) : ZanoException(message, transfer) {
     constructor(message: String?) : this(message, null)
 }

@@ -9,6 +9,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.DataInputStream
@@ -48,7 +49,7 @@ class TransferDeliveryTest {
     fun daemonThatTakesTheSameBytesSettlesIt() = runBlocking {
         took.add("b")
 
-        assertTrue(delivery("b", "a").deliver(signed))
+        assertEquals("b", delivery("b", "a").deliver(signed))
         assertEquals(listOf("broadcast b 04abcdef"), calls)
     }
 
@@ -57,7 +58,7 @@ class TransferDeliveryTest {
     fun daemonThatRefusesTheBytesButHasTheTransactionSettlesIt() = runBlocking {
         have.add("b")
 
-        assertTrue(delivery("b", "a").deliver(signed))
+        assertEquals("b", delivery("b", "a").deliver(signed))
         assertEquals(listOf("broadcast b 04abcdef", "has b $hash"), calls)
     }
 
@@ -65,13 +66,13 @@ class TransferDeliveryTest {
     fun nextDaemonIsTriedWhenOneDoesNotHelp() = runBlocking {
         took.add("a")
 
-        assertTrue(delivery("b", "a").deliver(signed))
+        assertEquals("a", delivery("b", "a").deliver(signed))
         assertEquals(listOf("broadcast b 04abcdef", "has b $hash", "broadcast a 04abcdef"), calls)
     }
 
     @Test
     fun transferNoDaemonTakesOrHasStaysUnsettled() = runBlocking {
-        assertFalse(delivery("b", "a").deliver(signed))
+        assertNull(delivery("b", "a").deliver(signed))
     }
 
     // A transaction the daemon refused comes without its bytes: it can only be asked for
@@ -80,7 +81,7 @@ class TransferDeliveryTest {
         took.add("b")
         have.add("a")
 
-        assertTrue(delivery("b", "a").deliver(SignedTransfer(hash, blobHex = null)))
+        assertEquals("a", delivery("b", "a").deliver(SignedTransfer(hash, blobHex = null)))
         assertEquals(listOf("has b $hash", "has a $hash"), calls)
     }
 
@@ -88,7 +89,7 @@ class TransferDeliveryTest {
     fun daemonsThatTakeTooLongLeaveItUnsettled() = runBlocking {
         took.add("b")
 
-        assertFalse(delivery("b", timeoutMs = 100, slow = true).deliver(signed))
+        assertNull(delivery("b", timeoutMs = 100, slow = true).deliver(signed))
     }
 
     // The daemon calls themselves

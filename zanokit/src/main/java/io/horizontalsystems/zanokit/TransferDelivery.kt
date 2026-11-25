@@ -107,17 +107,73 @@ internal class TransferDelivery(
 ) {
     constructor(rpc: DaemonRpc, daemonAddresses: List<String>) : this(rpc::broadcast, rpc::hasTransaction, daemonAddresses)
 
-    /** True when a daemon has the transfer. False says nothing: it may still be out there. */
-    suspend fun deliver(transfer: SignedTransfer): Boolean =
+    /**
+     * The daemon that took the transfer or has it. Null says nothing: it may still be out there.
+     */
+    suspend fun deliver(transfer: SignedTransfer): String? =
         withTimeoutOrNull(timeoutMs) {
-            daemonAddresses.any { daemon ->
+            daemonAddresses.firstOrNull { daemon ->
                 // A daemon answers a transaction it already holds in a block with a refusal,
                 // so a broadcast that was not taken is followed by the question
                 (transfer.blobHex != null && broadcast(daemon, transfer.blobHex)) || hasTransaction(daemon, transfer.hash)
             }
-        } ?: false
+        }
 
     companion object {
         private const val TIMEOUT_MS = 30_000L
     }
+}
+
+/**
+ * One send, start to end, with what the kit does about a daemon that fails.
+ *
+ * Before the broadcast nothing was sent, so the wallet moves to another daemon and the transfer
+ * is built again there, once. After a broadcast that did not end in a clear answer the same
+ * signed transaction is settled with the daemons, and the wallet follows it to the daemon that
+ * has it. Nothing is ever built a second time once a broadcast may have gone out.
+ *
+ * @param transfer builds, signs and broadcasts through the wallet's daemon; gives the id.
+ * @param otherDaemonThatAnswers another daemon the kit may use that is ready, or null.
+ * @param deliver see [TransferDelivery.deliver].
+ */
+internal class SendFlow(
+    private val transfer: suspend () -> String,
+    private val otherDaemonThatAnswers: suspend () -> String?,
+    private val setDaemon: (String) -> Unit,
+    private val deliver: suspend (SignedTransfer) -> String?,
+) {
+    suspend fun run(): SendResult =
+        try {
+            SendResult.Sent(transferOnAWorkingDaemon())
+        } catch (error: InsufficientFundsException) {
+            SendResult.NotSent(SendResult.Reason.InsufficientFunds, error.message)
+        } catch (error: NodeUnreachableException) {
+            SendResult.NotSent(SendResult.Reason.NodeUnreachable, error.message)
+        } catch (error: BroadcastUnconfirmedException) {
+            SendResult.Unknown(error.transfer?.hash, error.message)
+        } catch (error: ZanoException) {
+            SendResult.NotSent(SendResult.Reason.Failed, error.message)
+        }
+
+    private suspend fun transferOnAWorkingDaemon(): String =
+        try {
+            settledTransfer()
+        } catch (error: NodeUnreachableException) {
+            val other = otherDaemonThatAnswers() ?: throw error
+            setDaemon(other)
+            settledTransfer()
+        }
+
+    private suspend fun settledTransfer(): String =
+        try {
+            transfer()
+        } catch (error: ZanoException) {
+            // The daemon may have taken the transaction although the wallet was told it failed:
+            // its answer was lost, or it refused a repeat of a broadcast it already had. The
+            // engine names the transaction, so it is settled with the daemons directly.
+            val signed = error.transfer ?: throw error
+            val daemon = deliver(signed) ?: throw error
+            setDaemon(daemon)
+            signed.hash
+        }
 }

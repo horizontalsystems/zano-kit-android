@@ -86,3 +86,31 @@ data class TransactionInfo(
 ) {
     val isNative: Boolean get() = assetId == ZANO_ASSET_ID
 }
+
+/**
+ * How a send ended. The kit never leaves the caller to work this out from an error's text.
+ */
+sealed class SendResult {
+    /** The transfer is in the network. */
+    data class Sent(val transactionHash: String) : SendResult()
+
+    /** Nothing was sent. Sending again cannot pay twice. */
+    data class NotSent(val reason: Reason, val message: String?) : SendResult()
+
+    /**
+     * The transfer may be in the network: it was handed to a daemon and no daemon the kit could
+     * ask confirmed it. Sending again can pay twice.
+     *
+     * @param transactionHash the transfer's id when the engine named it, to look it up later.
+     */
+    data class Unknown(val transactionHash: String?, val message: String?) : SendResult()
+
+    enum class Reason {
+        /** No daemon the kit may use answered the calls that come before the broadcast. */
+        NodeUnreachable,
+        InsufficientFunds,
+
+        /** The daemon refused the transaction, or the engine could not build it. */
+        Failed,
+    }
+}

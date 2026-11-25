@@ -26,7 +26,7 @@ class ZanoCore(
     private val context: Context,
     private val wallet: ZanoWallet,
     private val walletId: String,
-    val daemonAddress: String,
+    daemonAddress: String,
     val networkType: NetworkType,
     private val storage: ZanoStorage,
     private val pinnedAssetIds: List<String> = emptyList(),
@@ -43,6 +43,12 @@ class ZanoCore(
             _syncStateFlow.value = SyncState.NotSynced.StatusError(e.message)
         }
     )
+
+    private val _daemonAddressFlow = MutableStateFlow(daemonAddress)
+
+    /** The daemon the wallet syncs from. The kit changes it itself when a send needs another one. */
+    val daemonAddressFlow: StateFlow<String> = _daemonAddressFlow
+    val daemonAddress: String get() = _daemonAddressFlow.value
 
     private var nativeWalletId: Long = -1
 
@@ -445,22 +451,40 @@ class ZanoCore(
         recipientAddress = recipientAddress,
     )
 
-    // Submits a transfer and caches the sent info for tx enrichment on next poll
-    suspend fun send(toAddress: String, assetId: String, amount: Long, fee: Long, memo: String?): String {
-        val txHash = try {
-            api.transfer(toAddress, assetId, amount, fee, comment = memo)
-        } catch (error: ZanoException) {
-            // The daemon may have taken the transaction although the wallet was told it failed:
-            // its answer was lost, or it refused a repeat of a broadcast it already had.
-            // Reporting that as a failure invites sending again, which would pay twice. The
-            // engine names the transaction, so it is settled with the daemons directly.
-            val transfer = error.transfer ?: throw error
-            if (!transferDelivery().deliver(transfer)) throw error
-            transfer.hash
+    /**
+     * Moves the wallet to another daemon without closing it: the engine drops its connection and
+     * goes on syncing from the new one. Before start() it only sets where the wallet will start.
+     */
+    @Synchronized
+    fun setDaemonAddress(address: String) {
+        if (address == daemonAddress) return
+        if (::api.isInitialized) {
+            ZanoWalletApi.resetConnectionUrl(address)
         }
-        storage.saveSentTransfer(txHash, assetId, amount, toAddress)
+        _daemonAddressFlow.value = address
         refresh()
-        return txHash
+    }
+
+    /** Submits a transfer and caches the sent info for tx enrichment on next poll. */
+    suspend fun send(toAddress: String, assetId: String, amount: Long, fee: Long, memo: String?): SendResult {
+        val result = SendFlow(
+            transfer = { api.transfer(toAddress, assetId, amount, fee, comment = memo) },
+            otherDaemonThatAnswers = ::otherDaemonThatAnswers,
+            setDaemon = ::setDaemonAddress,
+            deliver = { transferDelivery().deliver(it) },
+        ).run()
+        if (result is SendResult.Sent) {
+            storage.saveSentTransfer(result.transactionHash, assetId, amount, toAddress)
+            refresh()
+        }
+        return result
+    }
+
+    // The fastest of the other daemons the kit may use that is ready for a wallet
+    private suspend fun otherDaemonThatAnswers(): String? {
+        val others = fallbackDaemonAddresses() - daemonAddress
+        if (others.isEmpty()) return null
+        return NodePinger(socksProxy).ping(others).filter { it.isValid }.minByOrNull { it.responseTime }?.daemonAddress
     }
 
     // The other daemons first: the wallet's own has just failed to answer, and a transaction any

@@ -213,24 +213,29 @@ class ZanoKit private constructor(
         amount: SendAmount,
         priority: SendPriority = SendPriority.default,
         memo: String? = null,
-    ): String {
+    ): SendResult {
         val fee = estimateFee(priority)
         val amountValue: Long = when (amount) {
             is SendAmount.Value -> amount.amount
             is SendAmount.All -> {
                 val bal = core.getBalance(assetId)
-                    ?: throw ZanoException("No balance for asset $assetId")
-                if (assetId == ZANO_ASSET_ID) {
-                    if (bal.unlocked <= fee) throw ZanoException("Insufficient funds")
-                    bal.unlocked - fee
-                } else {
-                    if (bal.unlocked <= 0) throw ZanoException("Insufficient funds")
-                    bal.unlocked
-                }
+                    ?: return SendResult.NotSent(SendResult.Reason.Failed, "No balance for asset $assetId")
+                val spendable = if (assetId == ZANO_ASSET_ID) bal.unlocked - fee else bal.unlocked
+                if (spendable <= 0) return SendResult.NotSent(SendResult.Reason.InsufficientFunds, "Insufficient funds")
+                spendable
             }
         }
         return core.send(toAddress, assetId, amountValue, fee, memo)
     }
+
+    // Daemon
+
+    /** The daemon the wallet syncs from. It changes when [setDaemonAddress] is called, and when
+     *  a send had to move to one of the fallback daemons. */
+    val daemonAddressFlow: StateFlow<String> get() = core.daemonAddressFlow
+
+    /** Moves the wallet to another daemon without closing it. */
+    fun setDaemonAddress(address: String) = core.setDaemonAddress(address)
 
     fun estimateFee(priority: SendPriority = SendPriority.default): Long =
         ZanoWalletApi.getCurrentTxFee(priority.value)
